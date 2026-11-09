@@ -15,6 +15,14 @@
   ],
   "license": "MIT",
   "author": "Kota Kagatsume",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/koutakagatsume/md-pages-viewer.git"
+  },
+  "bugs": {
+    "url": "https://github.com/koutakagatsume/md-pages-viewer/issues"
+  },
+  "homepage": "https://github.com/koutakagatsume/md-pages-viewer#readme",
   "type": "module",
   "main": "./dist/md-pages-viewer.mjs",
   "module": "./dist/md-pages-viewer.mjs",
@@ -43,6 +51,6 @@
     "@playwright/test": "1.64.1",
     "dompurify": "3.4.17",
     "esbuild": "0.28.2",
-    "marked": "18.1.2"
+    "marked": "18.1.3"
   }
 }
