@@ -611,8 +611,14 @@
 /* ---- narrow (spec 6): judged by the element's own width ---- */
 
 @container (max-width: 767.98px) {
+  /* The cut at the element's left and right edges for the sliding sidebar
+     below. It is fixed, and only the sidebar moves, so no frame can show the
+     sidebar outside the element, whatever draws the motion. clip (unlike
+     hidden) makes no scroll container: the sticky toolbar and columns still
+     stick to the page's scroller. */
   .mpv-layout {
     grid-template-columns: minmax(0, 1fr);
+    overflow-x: clip;
   }
 
   .mpv-main {
@@ -639,10 +645,12 @@
      its button stays in place. It fills the cell, but no more than the view:
      while the page scrolls it stays under the toolbar like the wide columns
      (the sticky rule above). [data-height] outranks the column rules above.
-     It slides in from the element's left edge: the clip moves against the
-     transform on the same timing, so the part left of that edge is always
-     cut away and the drawer never shows over the host page (the element may
-     sit anywhere, e.g. in a panel on the right of the screen). */
+     It slides in from the element's left edge and back: only its position
+     moves, and the layout's fixed cut (above) hides what is left of that
+     edge, so it never shows over the host page (the element may sit
+     anywhere, e.g. in a panel on the right of the screen). A clip moved
+     along with the position would not do: browsers may draw the two motions
+     apart, a frame or more out of step. */
   .mpv[data-height] .mpv-sidebar {
     grid-column: 1;
     z-index: 3;
@@ -653,21 +661,17 @@
     color: var(--mpv-color-text, CanvasText);
     box-shadow: 4px 0 16px rgba(0, 0, 0, 0.15);
     transform: translateX(-100%);
-    clip-path: inset(0 -24px 0 100%);
     visibility: hidden;
     transition:
       transform 0.2s ease,
-      clip-path 0.2s ease,
       visibility 0s 0.2s;
   }
 
   .mpv[data-height][data-sidebar-open] .mpv-sidebar {
     transform: none;
-    clip-path: inset(0 -24px 0 0);
     visibility: inherit;
     transition:
       transform 0.2s ease,
-      clip-path 0.2s ease,
       visibility 0s;
   }
 

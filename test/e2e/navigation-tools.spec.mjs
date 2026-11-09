@@ -290,7 +290,12 @@ test('[表示/開閉の動き] 狭い表示幅のページ一覧は、要素の�
   const area = await box(viewer);
 
   // 開く途中：ページ一覧は動いていて、要素の左の外（組み込み先の画面）には出ていない
-  expect(await clickAndPause(viewer, 'sidebar-toggle', 100)).toEqual(expect.arrayContaining(['transform', 'opacity']));
+  const moving = await clickAndPause(viewer, 'sidebar-toggle', 100);
+  expect(moving).toEqual(expect.arrayContaining(['transform', 'opacity']));
+  // 動かすのは位置だけで、切り口（要素の左端）は固定。切り口も一緒に動かすと、
+  // ブラウザによっては2つの動きが別々に描かれてずれ、外にはみ出す
+  expect(moving).not.toContain('clip-path');
+  expect(await viewer.evaluate((el) => getComputedStyle(el.shadowRoot.querySelector('.mpv-layout')).overflowX)).toBe('clip');
   const opening = await box(sidebar);
   expect(opening.left).toBeLessThan(area.left - 1);
   expect(opening.right).toBeGreaterThan(area.left + 1);
