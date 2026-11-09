@@ -1,0 +1,15 @@
+[
+  {
+    "id": "intro",
+    "parentId": null,
+    "title": "はじめに",
+    "order": 1,
+    "md": "# はじめに\n\n`md-pages-viewer` は、階層のあるMarkdown文書を表示するライブラリです。`<script>` を1行読み込むだけで、どのプロジェクトにも組み込めます。\n\n![画面の構成](docs/images/layout.svg)\n\n## 表示されるもの\n\n- 上：ツールバー（今の場所と検索欄。サイドバーと目次の開閉ボタン）\n- 左：ページ階層のサイドバー\n- 中央：本文と、前後のページへのリンク\n- 右：ページ内目次（本文の h2・h3 から作ります）\n\n## 次に読むページ\n\n- [組み込み方](?page=install)\n- [データの形式](docs/data.md)\n- [オプション](?page=options#オプション一覧)\n"
+  },
+  { "id": "install", "parentId": "intro", "title": "組み込み方", "order": 1, "src": "docs/install.md" },
+  { "id": "data", "parentId": "intro", "title": "データの形式", "order": 2, "src": "docs/data.md" },
+  { "id": "options", "parentId": null, "title": "オプション", "order": 2, "src": "docs/options.md" },
+  { "id": "links", "parentId": "options", "title": "画像とリンク", "order": 1, "src": "docs/links.md" },
+  { "id": "style", "parentId": "options", "title": "見た目の変更", "order": 2, "src": "docs/style.md" },
+  { "id": "faq", "parentId": null, "title": "よくある質問", "order": 3, "src": "docs/faq.md" }
+]

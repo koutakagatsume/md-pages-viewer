@@ -1,0 +1,5 @@
+[
+  { "id": "a", "parentId": null, "title": "ページA", "order": 1, "src": "/test/fixtures/data-fetch/a.md" },
+  { "id": "b", "parentId": "a", "title": "ページB", "order": 1, "src": "/test/fixtures/data-fetch/b.md" },
+  { "id": "m", "parentId": null, "title": "ページM", "order": 2, "md": "# ページM本文\n\nmdで渡した本文です。" }
+]

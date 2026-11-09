@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>md-pages-viewer デモ（new）</title>
+    <style>
+      body {
+        margin: 0;
+        padding: 24px;
+        font-family: system-ui, -apple-system, 'Segoe UI', 'Hiragino Sans', 'Yu Gothic UI', sans-serif;
+        color: #1f2328;
+        background: #f6f8fa;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 4px;
+      }
+      p {
+        margin: 0 0 16px;
+        font-size: 14px;
+      }
+      #manual {
+        height: 520px;
+        background: #fff;
+        border: 1px solid #d0d7de;
+        border-radius: 8px;
+        overflow: hidden;
+        --mpv-color-accent: #8250df;
+      }
+    </style>
+    <script src="../dist/md-pages-viewer.js"></script>
+  </head>
+  <body>
+    <h1>new MdPagesViewer() の例</h1>
+    <p>高さ 520px の枠に入れた例です。サイドバー・本文・目次がそれぞれの中でスクロールします。<a href="index.html">タグの例に戻る</a></p>
+    <div id="manual"></div>
+    <script>
+      new MdPagesViewer('#manual', {
+        pages: 'pages.json',
+        currentId: 'options',
+        urlParam: 'doc',
+      });
+    </script>
+  </body>
+</html>

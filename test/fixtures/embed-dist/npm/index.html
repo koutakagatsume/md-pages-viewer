@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>npm install (bundled)</title>
+    <!-- app.js is main.js bundled by the test with esbuild, the way a
+         Vite project would bundle `import ... from "md-pages-viewer"`. -->
+    <script type="module" src="app.js"></script>
+  </head>
+  <body>
+    <md-pages-viewer id="by-tag" url-param="false"></md-pages-viewer>
+    <div id="by-new"></div>
+  </body>
+</html>

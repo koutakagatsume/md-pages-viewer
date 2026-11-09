@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>組み込み先のテストページ</title>
+    <style>
+      /* Scroll anchoring off, so scroll positions change only when something scrolls. */
+      html { overflow-anchor: none; }
+      body { margin: 0; font-family: sans-serif; }
+      #top { height: 80px; background: #eef; }
+      #host-intro { height: 200px; background: #efe; }
+      #host-bottom { height: 1500px; background: #fee; }
+      /* Always in view, so clicking it does not scroll the page first. */
+      .host-nav { position: fixed; right: 8px; bottom: 8px; z-index: 10; background: #fff; border: 1px solid #999; padding: 4px; }
+    </style>
+    <script src="/dist/md-pages-viewer.js"></script>
+  </head>
+  <body>
+    <header id="top">
+      <p class="host-title">組み込み先のヘッダー</p>
+    </header>
+    <nav class="host-nav">
+      <a id="host-to-top" href="#top">ページの先頭へ</a>
+      <a id="host-to-bottom" href="#host-bottom">ページの下へ</a>
+    </nav>
+    <section id="host-intro">
+      <p>組み込み先の本文</p>
+      <input id="host-input" />
+    </section>
+    <div id="mount"></div>
+    <section id="host-bottom">
+      <p>組み込み先のフッター</p>
+    </section>
+  </body>
+</html>

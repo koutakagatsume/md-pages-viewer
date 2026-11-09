@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>loaded twice: twice-mjs-js</title>
+    <script>
+      // Counts registrations of the tag and records each script load.
+      window.__loads = [];
+      window.__defines = 0;
+      (() => {
+        const define = customElements.define.bind(customElements);
+        customElements.define = (name, ctor, options) => {
+          if (name === 'md-pages-viewer') window.__defines++;
+          return define(name, ctor, options);
+        };
+      })();
+    </script>
+    <script type="module" src="/dist/md-pages-viewer.mjs" onload="__loads.push('mjs')"></script>
+    <script defer src="/dist/md-pages-viewer.js" onload="__loads.push('js')"></script>
+  </head>
+  <body>
+    <md-pages-viewer id="by-tag" pages="pages.json" url-param="false"></md-pages-viewer>
+    <div id="by-new"></div>
+  </body>
+</html>

@@ -1,0 +1,185 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>host page with its own CSS</title>
+    <!-- Kept in both modes: the values the library inherits on purpose
+         (color, font-family) and fixed sizes so the viewer gets the same width. -->
+    <style id="base">
+      html {
+        overflow-y: scroll;
+      }
+      body {
+        color: rgb(20, 40, 60);
+        font-family: Arial, sans-serif;
+      }
+      .site-header {
+        width: 1200px;
+      }
+      .site {
+        display: grid;
+        grid-template-columns: 220px 980px;
+        align-items: start;
+      }
+      #slot {
+        width: 960px;
+      }
+    </style>
+    <!-- The host's reset CSS and its own element styles. Removed with ?plain. -->
+    <style id="host-css">
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+        border: 0 solid currentColor;
+      }
+      html {
+        font-size: 62.5%;
+        line-height: 1;
+      }
+      body {
+        font-size: 2.2rem;
+        line-height: 2.4;
+      }
+      h1, h2, h3, h4, h5, h6 {
+        font-size: inherit;
+        font-weight: inherit;
+      }
+      ul, ol {
+        list-style: none;
+      }
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+      img {
+        display: block;
+        width: 100%;
+        height: 240px;
+        object-fit: cover;
+      }
+      table {
+        border-collapse: separate;
+        border-spacing: 12px;
+      }
+      button {
+        all: unset;
+      }
+      h2 {
+        font-size: 40px;
+        color: rgb(200, 0, 0);
+        border-left: 12px solid rgb(200, 0, 0);
+        padding: 16px;
+        margin: 32px 0;
+        background: rgb(255, 230, 230);
+      }
+      p {
+        margin-bottom: 3em;
+      }
+      li {
+        margin: 10px;
+      }
+      th, td {
+        padding: 18px;
+        border: 3px dashed rgb(0, 150, 0);
+      }
+      code, pre {
+        font-family: 'Courier New', monospace;
+        font-size: 28px;
+        background: black;
+        color: lime;
+      }
+      blockquote {
+        border: 4px double blue;
+      }
+      hr {
+        border-top: 8px solid black;
+      }
+      input {
+        width: 50px;
+        height: 50px;
+      }
+      strong, em, del {
+        font-size: 30px;
+      }
+      nav ul {
+        display: flex;
+        gap: 24px;
+      }
+      nav a {
+        display: block;
+        padding: 8px 12px;
+        background: rgb(51, 51, 51);
+        color: white;
+      }
+    </style>
+    <!-- Inherited text settings on body. Removed with ?plain and ?reset-only. -->
+    <style id="host-text">
+      body {
+        letter-spacing: 0.15em;
+        word-spacing: 6px;
+        text-align: center;
+        text-indent: 24px;
+        text-transform: uppercase;
+        font-weight: 700;
+        font-style: italic;
+        white-space: pre-line;
+      }
+    </style>
+    <script>
+      (() => {
+        const query = new URLSearchParams(location.search);
+        if (query.has('plain')) document.getElementById('host-css').remove();
+        if (query.has('plain') || query.has('reset-only')) document.getElementById('host-text').remove();
+      })();
+    </script>
+  </head>
+  <body>
+    <header class="site-header" data-check data-rect>
+      <nav class="site-nav" aria-label="サイト" data-check data-rect>
+        <ul data-check data-rect>
+          <li data-check data-rect><a href="#home" data-check data-rect>Home</a></li>
+          <li data-check data-rect><a href="#docs" data-check data-rect>Docs</a></li>
+        </ul>
+      </nav>
+    </header>
+    <div class="site">
+      <aside class="site-aside" data-check data-rect>
+        <h2 data-check data-rect>Aside</h2>
+        <ul data-check data-rect><li data-check data-rect><a href="#a" data-check data-rect>Link</a></li></ul>
+        <!-- Host elements that use the library's internal class names. -->
+        <div class="mpv" data-check data-rect>mpv</div>
+        <div class="mpv-probe" data-check data-rect>probe</div>
+        <div class="mpv-layout" data-check data-rect>layout</div>
+        <nav class="mpv-sidebar" data-check data-rect>
+          <ul class="mpv-tree" data-check data-rect>
+            <li data-check data-rect>
+              <div class="mpv-row" data-check data-rect>
+                <button type="button" class="mpv-toggle" aria-expanded="true" data-check data-rect>toggle</button>
+                <a class="mpv-node-link" aria-current="page" href="#x" data-check data-rect>node</a>
+              </div>
+            </li>
+          </ul>
+        </nav>
+        <div class="mpv-main" data-check data-rect>main</div>
+        <div class="mpv-toolbar" data-check data-rect><button type="button" class="mpv-tool mpv-sidebar-toggle" data-check data-rect>menu</button><div class="mpv-search-box" data-check data-rect><input class="mpv-search" data-check data-rect><kbd class="mpv-search-key" data-check data-rect>/</kbd></div></div>
+        <nav class="mpv-breadcrumb" data-check data-rect><ol data-check data-rect><li data-check data-rect>a</li><li data-check data-rect>b</li></ol></nav>
+        <article class="mpv-content" data-check data-rect><h2 data-check data-rect>content h2</h2><p data-check data-rect>content p</p></article>
+        <nav class="mpv-toc" data-check data-rect><div class="mpv-column-head" data-check data-rect>toc</div></nav>
+        <ul class="mpv-children" data-check data-rect><li class="mpv-child" data-check data-rect><a class="mpv-child-link" href="#c" data-check data-rect>child</a></li></ul>
+        <nav class="mpv-pager" data-check data-rect><a class="mpv-pager-link" href="#p" data-check data-rect>next</a></nav>
+        <details class="mpv-toc-mobile" data-check data-rect><summary>toc</summary></details>
+        <div class="mpv-status" data-check data-rect>status</div>
+        <button type="button" class="mpv-button" data-check data-rect>button</button>
+        <div class="mpv-backdrop" data-check data-rect>backdrop</div>
+      </aside>
+      <main class="site-main">
+        <h2 class="host-heading" data-check data-rect>Host heading</h2>
+        <div id="slot"></div>
+      </main>
+    </div>
+    <footer class="site-footer" data-check><p data-check>footer</p></footer>
+  </body>
+</html>

@@ -1,0 +1,1727 @@
+// <md-pages-viewer>: the custom element. Option handling (spec 5.6, 5.7),
+// fetching (5.2), rendering (5.4, 6) and URL/scroll handling (5.5).
+
+import css from './styles.css';
+import { buildModel, resolveInitialPage } from './pages.js';
+import { classifyLink, decodeFragment, headingId, pageUrl, resolveImage } from './paths.js';
+import { renderMarkdown } from './markdown.js';
+
+export const TAG = 'md-pages-viewer';
+
+const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles'];
+const ATTRIBUTES = { pages: 'pages', 'current-id': 'currentId', 'base-url': 'baseUrl', 'url-param': 'urlParam' };
+
+const TEXT = {
+  loading: '読み込み中…',
+  failed: '読み込めませんでした',
+  retry: '再読み込み',
+  notFound: 'ページが見つかりません',
+  empty: 'ページがありません',
+  toc: '目次',
+  pages: 'ページ一覧',
+  breadcrumb: 'パンくずリスト',
+  toggle: '開閉',
+  chapters: (count) => `${count}章`,
+  childPages: (count) => `${count}ページ`,
+  search: '検索',
+  searchLabel: 'ページを検索',
+  noResults: (query) => `「${query}」に一致するページはありません`,
+  sidebarClose: 'ページ一覧を閉じる',
+  sidebarOpen: 'ページ一覧を開く',
+  tocClose: '目次を閉じる',
+  tocOpen: '目次を開く',
+  viewCard: 'カード表示',
+  viewList: '一覧表示',
+  columnPages: 'ページ',
+  columnContent: '内容',
+  pager: '前後のページ',
+  previous: '前へ',
+  next: '次へ',
+};
+
+/** At most this many search results are listed (spec 5.4). */
+const SEARCH_RESULTS_SHOWN = 50;
+
+/** Creates an element. `hidden: true` sets the attribute; other props are attributes as given. */
+function h(tag, props, ...children) {
+  const element = document.createElement(tag);
+  for (const [name, value] of Object.entries(props)) {
+    if (name === 'hidden') element.hidden = value;
+    else element.setAttribute(name, value);
+  }
+  element.append(...children);
+  return element;
+}
+
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+/**
+ * A line icon (24x24, currentColor). `shapes` are [tag, attributes] pairs.
+ * Built with DOM calls, like everything else here.
+ */
+function icon(...shapes) {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  for (const [name, value] of Object.entries({ viewBox: '0 0 24 24', width: '18', height: '18', fill: 'none', stroke: 'currentColor', 'stroke-width': '1.8', 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true', focusable: 'false' })) {
+    svg.setAttribute(name, value);
+  }
+  for (const [tag, attributes] of shapes) {
+    const shape = document.createElementNS(SVG_NS, tag);
+    for (const [name, value] of Object.entries(attributes)) shape.setAttribute(name, value);
+    svg.append(shape);
+  }
+  return svg;
+}
+
+const PANEL = ['rect', { x: '3', y: '4', width: '18', height: '16', rx: '2' }];
+/** Panel icons: which side the column is on, and which way the arrow points (spec 6). */
+const ICONS = {
+  sidebarClose: () => icon(PANEL, ['path', { d: 'M9 4v16' }], ['path', { d: 'M16 10l-2 2l2 2' }]),
+  sidebarOpen: () => icon(PANEL, ['path', { d: 'M9 4v16' }], ['path', { d: 'M14 10l2 2l-2 2' }]),
+  tocClose: () => icon(PANEL, ['path', { d: 'M15 4v16' }], ['path', { d: 'M8 10l2 2l-2 2' }]),
+  tocOpen: () => icon(PANEL, ['path', { d: 'M15 4v16' }], ['path', { d: 'M10 10l-2 2l2 2' }]),
+  search: () => icon(['circle', { cx: '11', cy: '11', r: '6' }], ['path', { d: 'M20 20l-4.5-4.5' }]),
+};
+
+// Built with DOM calls rather than innerHTML: a page that enforces Trusted
+// Types must be able to show these parts (and any error) without our policy.
+// The `part` names are public: hosts style them with ::part() (spec 5.8).
+function buildParts() {
+  const retryButton = (extra) => h('button', { type: 'button', class: `mpv-button ${extra}`, part: 'retry-button', hidden: true }, TEXT.retry);
+  const tocList = () => h('ul', { class: 'mpv-toc-list' });
+  return [
+    h('div', { class: 'mpv-probe', 'aria-hidden': 'true' }),
+    h(
+      'div',
+      { class: 'mpv', 'data-height': 'auto' },
+      h('div', { class: 'mpv-status', part: 'status', role: 'status', hidden: true }, h('p', { class: 'mpv-status-text' }), retryButton('mpv-status-retry')),
+      h(
+        'div',
+        { class: 'mpv-layout', hidden: true },
+        h(
+          'div',
+          { class: 'mpv-toolbar', part: 'toolbar' },
+          h('button', { type: 'button', class: 'mpv-tool mpv-sidebar-toggle', part: 'sidebar-toggle', 'aria-label': TEXT.sidebarClose, title: TEXT.sidebarClose }, ICONS.sidebarClose()),
+          h('nav', { class: 'mpv-breadcrumb', part: 'breadcrumb', 'aria-label': TEXT.breadcrumb }, h('ol', {})),
+          h(
+            'div',
+            { class: 'mpv-search-box', part: 'search' },
+            ICONS.search(),
+            h('input', { type: 'search', class: 'mpv-search', part: 'search-input', placeholder: TEXT.search, 'aria-label': TEXT.searchLabel, autocomplete: 'off', 'aria-keyshortcuts': '/' }),
+            h('kbd', { class: 'mpv-search-key', 'aria-hidden': 'true' }, '/'),
+            h('div', { class: 'mpv-search-results', part: 'search-results', role: 'region', 'aria-label': TEXT.searchLabel, hidden: true }),
+          ),
+          h('button', { type: 'button', class: 'mpv-tool mpv-view-toggle', part: 'view-toggle', hidden: true }, TEXT.viewCard),
+          h('button', { type: 'button', class: 'mpv-tool mpv-toc-toggle', part: 'toc-toggle', 'aria-label': TEXT.tocClose, title: TEXT.tocClose, hidden: true }, ICONS.tocClose()),
+        ),
+        h(
+          'nav',
+          { class: 'mpv-sidebar', part: 'sidebar', 'aria-label': TEXT.pages },
+          h('div', { class: 'mpv-column-head' }, TEXT.columnPages),
+          h('ul', { class: 'mpv-tree' }),
+        ),
+        h(
+          'div',
+          { class: 'mpv-main', part: 'main' },
+          h('details', { class: 'mpv-toc-mobile', part: 'toc-mobile', hidden: true }, h('summary', {}, TEXT.toc), tocList()),
+          h('div', { class: 'mpv-body-status', part: 'status', role: 'status', hidden: true }, h('p', { class: 'mpv-body-status-text' }), retryButton('mpv-body-retry')),
+          h('article', { class: 'mpv-content', part: 'content' }),
+          h('nav', { class: 'mpv-pager', part: 'pager', 'aria-label': TEXT.pager, hidden: true }),
+        ),
+        h('nav', { class: 'mpv-toc', part: 'toc', 'aria-label': TEXT.toc, hidden: true }, h('div', { class: 'mpv-column-head' }, TEXT.toc), tocList()),
+        h('div', { class: 'mpv-backdrop' }),
+      ),
+    ),
+  ];
+}
+
+const warn = (message) => console.warn(`[${TAG}] ${message}`);
+
+/**
+ * Text for matching (spec 5.4): NFKC (full/half width alike) and lower case,
+ * per character, with where each character came from in the original, so a
+ * match can be marked in the text as written.
+ * @returns {{text: string, from: number[]}}
+ */
+function foldForSearch(original) {
+  let text = '';
+  const from = [];
+  let index = 0;
+  for (const char of original) {
+    const folded = char.normalize('NFKC').toLowerCase();
+    text += folded;
+    for (let k = 0; k < folded.length; k++) from.push(index);
+    index += char.length;
+  }
+  from.push(index);
+  return { text, from };
+}
+
+/** The search words: folded, split on spaces. */
+function searchWords(query) {
+  return foldForSearch(query).text.split(/\s+/).filter(Boolean);
+}
+
+/** Ranges [start, end) in `original` where any of `words` occurs, merged. */
+function matchRanges(original, words) {
+  const { text, from } = foldForSearch(original);
+  const ranges = [];
+  for (const word of words) {
+    for (let at = text.indexOf(word); at !== -1; at = text.indexOf(word, at + word.length)) {
+      ranges.push([from[at], from[at + word.length]]);
+    }
+  }
+  ranges.sort((a, b) => a[0] - b[0]);
+  const merged = [];
+  for (const range of ranges) {
+    const last = merged[merged.length - 1];
+    if (last && range[0] <= last[1]) last[1] = Math.max(last[1], range[1]);
+    else merged.push([...range]);
+  }
+  return merged;
+}
+
+/** Whether `original` contains every word. */
+function containsAll(original, words) {
+  const { text } = foldForSearch(original);
+  return words.every((word) => text.includes(word));
+}
+
+/** `original` (or the part [start, end)) as text nodes with the matches in <mark part="search-mark">. */
+function markedText(original, words, start = 0, end = original.length) {
+  const fragment = document.createDocumentFragment();
+  let at = start;
+  for (const [from, to] of matchRanges(original, words)) {
+    if (to <= start || from >= end) continue;
+    const a = Math.max(from, start);
+    const b = Math.min(to, end);
+    if (a > at) fragment.append(original.slice(at, a));
+    fragment.append(h('mark', { part: 'search-mark' }, original.slice(a, b)));
+    at = b;
+  }
+  if (at < end) fragment.append(original.slice(at, end));
+  return fragment;
+}
+
+/** A short part of `text` around the first match, with ellipses where it was cut. */
+function snippetOf(text, words) {
+  const first = matchRanges(text, words)[0];
+  const start = first ? Math.max(0, first[0] - 24) : 0;
+  const end = Math.min(text.length, start + 90);
+  const fragment = document.createDocumentFragment();
+  if (start > 0) fragment.append('…');
+  fragment.append(markedText(text, words, start, end));
+  if (end < text.length) fragment.append('…');
+  return fragment;
+}
+
+/**
+ * Gives every heading under `container` an id (spec 5.4) and returns the
+ * headings in order. `taken` holds the ids already in use and is updated.
+ * The body and the child index both use this, so a link to a child's
+ * heading matches the id it gets when the child page is shown.
+ */
+function assignHeadingIds(container, taken) {
+  const headings = [...container.querySelectorAll('h1, h2, h3, h4, h5, h6')];
+  for (const heading of headings) {
+    if (heading.id) continue;
+    heading.id = headingId(heading.textContent, taken);
+    taken.add(heading.id);
+  }
+  return headings;
+}
+
+// Our rules sit in a cascade layer, so the CSS a host passes in `styles`
+// (unlayered) wins over them whatever the specificity (spec 5.8).
+const LIBRARY_CSS = `@layer md-pages-viewer {\n${css}\n}`;
+
+/** A constructed stylesheet holding `text`, or null where they are not supported. */
+function constructedSheet(text) {
+  if (!('adoptedStyleSheets' in ShadowRoot.prototype)) return null;
+  try {
+    const sheet = new CSSStyleSheet();
+    sheet.replaceSync(text);
+    return sheet;
+  } catch {
+    return null;
+  }
+}
+
+// One constructed stylesheet shared by every instance. Unlike a <style>
+// element it is not blocked by a host CSP without 'unsafe-inline'.
+let styleSheet;
+function sharedStyleSheet() {
+  if (styleSheet === undefined) styleSheet = constructedSheet(LIBRARY_CSS);
+  return styleSheet;
+}
+
+export class MdPagesViewerElement extends HTMLElement {
+  static get observedAttributes() {
+    return Object.keys(ATTRIBUTES);
+  }
+
+  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined };
+  // Where the host's `styles` go: a constructed stylesheet after ours, or a
+  // <style> after ours where constructed stylesheets are not supported.
+  #librarySheet = null;
+  #libraryStyle = null;
+  #hostSheet = null;
+  #hostStyle = null;
+  #pending = new Set();
+  #scheduled = false;
+
+  #model = null;
+  #initialized = false; // the first page has been decided
+  #listPending = false; // a page list load has started and not yet succeeded
+  // What happened while a list was pending, numbered so the later one wins:
+  // a change of currentId, and back/forward. 0 = did not happen.
+  #intentCount = 0;
+  #currentIdIntent = 0;
+  #popIntent = 0;
+  #listReloaded = false; // the list was loaded again after the first display (pages/fetch changed)
+  #listToken = 0;
+  #navToken = 0;
+  #bodyCache = new Map();
+  #outlines = new WeakMap(); // page -> its headings and text (see #outlineOf); a new list has new page objects
+  #searchQuery = ''; // what the search box holds
+  #searchModel = null; // the list the shown results were made from
+  #searchSelected = 0; // the result Enter opens (moved with the arrow keys)
+  #childView = 'list'; // how a child index is shown: 'list' (a table) or 'card'
+  #showingChildIndex = false;
+  #bodyRequests = new Map(); // id -> {generation, src, promise} while a body is being fetched
+  #cacheGeneration = 0;
+
+  /** @type {{kind: 'page'|'missing', id: string} | {kind: 'empty'} | null} */
+  #displayed = null;
+  #initialId = null;
+  #expanded = new Set();
+
+  #ui;
+  #resizeObserver;
+  #followTarget = null; // what we listen to while moving the side columns by hand
+  #followBase = null; // the scroll base they follow (null = the window)
+  #onFollowScroll = () => this.#placeSideColumns();
+  #onWindowResize = () => {
+    this.#updateFollow();
+    this.#onSpyScroll();
+  };
+  /** @type {{id: string, level: string, text: string, heading?: Element, group: number, links: Element[], items: Element[]}[]} */
+  #tocItems = [];
+  #spyFrame = 0;
+  // Scroll events do not cross shadow boundaries, so both our own shadow
+  // root (the body column) and the document (the window and host elements)
+  // are listened to, in the capture phase. One update per frame.
+  #onSpyScroll = () => {
+    if (this.#spyFrame) return;
+    this.#spyFrame = requestAnimationFrame(() => {
+      this.#spyFrame = 0;
+      this.#updateTocCurrent();
+    });
+  };
+  #onPopState = () => this.#handlePopState();
+  // Clicks seen inside the sidebar or on the menu button. Recorded from our
+  // own shadow root, because a host that puts us in a closed shadow root
+  // hides our nodes from document-level listeners.
+  #insideClicks = new WeakSet();
+  #searchClicks = new WeakSet(); // clicks inside the search box (same reason)
+  // The narrow-screen sidebar closes on a click anywhere outside it,
+  // including the host page (spec 6); so do the search results.
+  #onDocumentClick = (event) => {
+    if (!this.#searchClicks.has(event)) this.#hideSearchResults();
+    if (!this.#ui.frame.hasAttribute('data-sidebar-open')) return;
+    if (this.#insideClicks.has(event)) return;
+    this.#closeSidebar();
+  };
+  // "/" moves to the search box (spec 5.4), unless the key is being typed
+  // somewhere, another viewer took it, or the search box cannot take focus
+  // (not shown, no pages). The key is kept from the page only when it moved.
+  #onDocumentKey = (event) => {
+    if (event.key !== '/' || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
+    const typing = (node) => node instanceof Element && (node.isContentEditable || node.closest('input, textarea, select, [contenteditable]') !== null);
+    // Inside a closed shadow root the event shows only its host: our own
+    // focus is read from our root, and a custom element may hold an input.
+    const target = event.composedPath()[0];
+    if (typing(target) || typing(this.shadowRoot.activeElement)) return;
+    if (target instanceof Element && target !== this && target.localName.includes('-')) return;
+    this.#ui.search.focus();
+    if (this.shadowRoot.activeElement !== this.#ui.search) return;
+    event.preventDefault();
+  };
+
+  constructor() {
+    super();
+    const root = this.attachShadow({ mode: 'open' });
+    root.append(...buildParts());
+    this.#librarySheet = sharedStyleSheet();
+    if (this.#librarySheet) {
+      root.adoptedStyleSheets = [this.#librarySheet];
+    } else {
+      this.#libraryStyle = document.createElement('style');
+      this.#libraryStyle.textContent = LIBRARY_CSS;
+      root.prepend(this.#libraryStyle);
+    }
+    const $ = (selector) => root.querySelector(selector);
+    this.#ui = {
+      probe: $('.mpv-probe'),
+      frame: $('.mpv'),
+      status: $('.mpv-status'),
+      statusText: $('.mpv-status-text'),
+      statusRetry: $('.mpv-status-retry'),
+      layout: $('.mpv-layout'),
+      toolbar: $('.mpv-toolbar'),
+      sidebarToggle: $('.mpv-sidebar-toggle'),
+      searchBox: $('.mpv-search-box'),
+      search: $('.mpv-search'),
+      searchResults: $('.mpv-search-results'),
+      viewToggle: $('.mpv-view-toggle'),
+      tocToggle: $('.mpv-toc-toggle'),
+      sidebar: $('.mpv-sidebar'),
+      tree: $('.mpv-tree'),
+      main: $('.mpv-main'),
+      pager: $('.mpv-pager'),
+      breadcrumb: $('.mpv-breadcrumb'),
+      tocMobile: $('.mpv-toc-mobile'),
+      bodyStatus: $('.mpv-body-status'),
+      bodyStatusText: $('.mpv-body-status-text'),
+      bodyRetry: $('.mpv-body-retry'),
+      content: $('.mpv-content'),
+      toc: $('.mpv-toc'),
+      tocLists: [$('.mpv-toc .mpv-toc-list'), $('.mpv-toc-mobile .mpv-toc-list')],
+      backdrop: $('.mpv-backdrop'),
+    };
+    root.addEventListener(
+      'click',
+      (event) => {
+        const path = event.composedPath();
+        if (path.includes(this.#ui.sidebar) || path.includes(this.#ui.sidebarToggle)) this.#insideClicks.add(event);
+        if (path.includes(this.#ui.searchBox)) this.#searchClicks.add(event);
+      },
+      true,
+    );
+    root.addEventListener('click', (event) => this.#handleClick(event));
+    this.#ui.search.addEventListener('focus', () => {
+      if (this.#searchQuery !== '') this.#ui.searchResults.hidden = false;
+    });
+    this.#ui.search.addEventListener('input', () => this.#runSearch());
+    this.#ui.search.addEventListener('keydown', (event) => this.#onSearchKey(event));
+    // In quirks mode the probe's height:100% resolves against the viewport
+    // and would push the host's layout; another check is used there.
+    if (document.compatMode === 'BackCompat') this.#ui.probe.hidden = true;
+    this.#resizeObserver = new ResizeObserver(() => {
+      this.#updateHeightMode();
+      this.#updateToolbar();
+      this.#updateFollow();
+    });
+  }
+
+  // ---- options ----
+
+  get pages() { return this.#options.pages; }
+  set pages(value) { this.#setOption('pages', value); }
+  get currentId() { return this.#options.currentId; }
+  set currentId(value) { this.#setOption('currentId', value); }
+  get baseUrl() { return this.#options.baseUrl; }
+  set baseUrl(value) { this.#setOption('baseUrl', value); }
+  get imageResolver() { return this.#options.imageResolver; }
+  set imageResolver(value) { this.#setOption('imageResolver', value); }
+  get fetch() { return this.#options.fetch; }
+  set fetch(value) { this.#setOption('fetch', value); }
+  get urlParam() { return this.#options.urlParam; }
+  set urlParam(value) { this.#setOption('urlParam', value); }
+  get styles() { return this.#options.styles; }
+  set styles(value) {
+    // Only the look changes, so it applies at once without drawing again.
+    this.#options.styles = value;
+    this.#applyHostStyles();
+  }
+
+  /** Puts the host's CSS (the `styles` option) after ours in the shadow root (spec 5.8). */
+  #applyHostStyles() {
+    const value = this.#options.styles;
+    let text = '';
+    if (typeof value === 'string') text = value;
+    else if (value !== undefined && value !== null) warn('styles must be a string of CSS.');
+
+    const root = this.shadowRoot;
+    if (this.#librarySheet) {
+      if (!this.#hostSheet) this.#hostSheet = constructedSheet('');
+      if (this.#hostSheet) {
+        this.#hostSheet.replaceSync(text);
+        root.adoptedStyleSheets = text ? [this.#librarySheet, this.#hostSheet] : [this.#librarySheet];
+        return;
+      }
+    }
+    if (!this.#hostStyle) {
+      this.#hostStyle = document.createElement('style');
+      if (this.#libraryStyle) this.#libraryStyle.after(this.#hostStyle);
+      else root.prepend(this.#hostStyle);
+    }
+    this.#hostStyle.textContent = text;
+  }
+
+  attributeChangedCallback(name, _oldValue, value) {
+    this.#setOption(ATTRIBUTES[name], value === null ? undefined : value);
+  }
+
+  connectedCallback() {
+    // Properties set before the element was defined are own data properties
+    // that hide our accessors. Attribute callbacks run before this, so a
+    // property set this way still counts as the later setting.
+    for (const key of OPTION_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(this, key)) {
+        const value = this[key];
+        delete this[key];
+        this[key] = value;
+      }
+    }
+    window.addEventListener('popstate', this.#onPopState);
+    // Bubble phase: our shadow root has already marked clicks inside the sidebar.
+    document.addEventListener('click', this.#onDocumentClick);
+    document.addEventListener('keydown', this.#onDocumentKey);
+    this.#resizeObserver.observe(this.#ui.probe);
+    this.#resizeObserver.observe(this);
+    this.#resizeObserver.observe(this.#ui.toolbar);
+    window.addEventListener('resize', this.#onWindowResize);
+    this.shadowRoot.addEventListener('scroll', this.#onSpyScroll, { capture: true, passive: true });
+    document.addEventListener('scroll', this.#onSpyScroll, { capture: true, passive: true });
+    this.#updateHeightMode();
+    this.#updateFollow();
+    if (this.#pending.size > 0 || !this.#initialized) this.#schedule();
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener('popstate', this.#onPopState);
+    document.removeEventListener('click', this.#onDocumentClick);
+    document.removeEventListener('keydown', this.#onDocumentKey);
+    window.removeEventListener('resize', this.#onWindowResize);
+    this.shadowRoot.removeEventListener('scroll', this.#onSpyScroll, { capture: true });
+    document.removeEventListener('scroll', this.#onSpyScroll, { capture: true });
+    if (this.#spyFrame) cancelAnimationFrame(this.#spyFrame);
+    this.#spyFrame = 0;
+    this.#resizeObserver.disconnect();
+    this.#stopFollowing();
+    // A list that arrives after removal must not touch the host's URL or
+    // history. Drop it, and load it again if the element comes back; what
+    // happened while it was loading (currentId, back/forward) still applies then.
+    if (this.#listPending) {
+      this.#listToken++;
+      this.#navToken++;
+      this.#listPending = false;
+      if (this.#initialized) this.#pending.add('pages');
+    }
+  }
+
+  #setOption(key, value) {
+    this.#options[key] = value;
+    this.#pending.add(key);
+    this.#schedule();
+  }
+
+  // Changes made in a row are applied together once (spec 5.6).
+  #schedule() {
+    if (this.#scheduled) return;
+    this.#scheduled = true;
+    queueMicrotask(() => {
+      this.#scheduled = false;
+      if (this.isConnected) this.#apply();
+    });
+  }
+
+  /** The query name, or null when URL syncing is off. */
+  #paramName() {
+    const value = this.#options.urlParam;
+    if (value === false || value === 'false') return null;
+    return typeof value === 'string' && value !== '' ? value : 'page';
+  }
+
+  #linkParamName() {
+    return this.#paramName() ?? 'page';
+  }
+
+  #apply() {
+    const changed = new Set(this.#pending);
+    this.#pending.clear();
+    const { pages } = this.#options;
+
+    if (pages === undefined || pages === null) {
+      this.#reset();
+      return;
+    }
+    if (!this.#initialized) {
+      // The first display reads currentId and the other options when the list arrives.
+      if (!this.#listPending || changed.has('pages') || changed.has('fetch')) this.#loadList({ first: true });
+      return;
+    }
+    if (changed.has('pages') || changed.has('fetch')) {
+      if (changed.has('currentId')) this.#currentIdIntent = ++this.#intentCount;
+      this.#clearBodyCache();
+      this.#loadList({ first: false });
+      return;
+    }
+    if (this.#listPending) {
+      // A new list is on its way: decide the page when it arrives, not
+      // from the old list. Other options apply at that render.
+      if (changed.has('currentId')) this.#currentIdIntent = ++this.#intentCount;
+      return;
+    }
+    const switched = changed.has('currentId') && this.#openCurrentId();
+    if (switched) return;
+    if (changed.has('urlParam')) this.#rerenderNavigation();
+    if (changed.has('imageResolver') || changed.has('baseUrl') || changed.has('urlParam')) this.#rerenderBody();
+  }
+
+  /** Opens currentId (spec 5.6). Returns whether the page was switched. */
+  #openCurrentId() {
+    const id = this.#options.currentId;
+    if (id === undefined || id === null || id === '') return false;
+    return this.#navigate(String(id), '', { fromCurrentId: true });
+  }
+
+  #reset() {
+    this.#listToken++;
+    this.#navToken++;
+    this.#listPending = false;
+    this.#currentIdIntent = 0;
+    this.#popIntent = 0;
+    this.#listReloaded = false;
+    this.#initialized = false;
+    this.#model = null;
+    this.#displayed = null;
+    this.#clearBodyCache();
+    this.#ui.status.hidden = true;
+    this.#ui.layout.hidden = true;
+  }
+
+  #clearBodyCache() {
+    this.#bodyCache.clear();
+    this.#bodyRequests.clear();
+    this.#cacheGeneration++;
+  }
+
+  /**
+   * The body of `page`. A fetch already running for the same page, list and
+   * src is shared, so leaving a page and coming back while it loads does not
+   * fetch it twice (spec 5.2).
+   */
+  #fetchBody(page, generation) {
+    const running = this.#bodyRequests.get(page.id);
+    if (running && running.generation === generation && running.src === page.src) return running.promise;
+    const request = { generation, src: page.src, promise: this.#fetchText(page.src) };
+    this.#bodyRequests.set(page.id, request);
+    const settle = () => {
+      if (this.#bodyRequests.get(page.id) === request) this.#bodyRequests.delete(page.id);
+    };
+    request.promise.then(settle, settle);
+    return request.promise;
+  }
+
+  // ---- fetching (spec 5.2) ----
+
+  #fetcher() {
+    const custom = this.#options.fetch;
+    return typeof custom === 'function' ? custom : (...args) => window.fetch(...args);
+  }
+
+  async #fetchList(url) {
+    const response = await this.#fetcher()(url);
+    if (!response || !response.ok) throw new Error(`HTTP ${response ? response.status : '?'}`);
+    const data = await response.json();
+    if (!Array.isArray(data)) throw new Error('The page list is not a JSON array.');
+    return data;
+  }
+
+  async #fetchText(url) {
+    const response = await this.#fetcher()(url);
+    if (!response || !response.ok) throw new Error(`HTTP ${response ? response.status : '?'}`);
+    return response.text();
+  }
+
+  // The list stays "pending" from the start of a load until one succeeds,
+  // including while a failed load waits for its retry button.
+  async #loadList({ first }) {
+    const token = ++this.#listToken;
+    this.#navToken++;
+    this.#listPending = true;
+    const source = this.#options.pages;
+    if (Array.isArray(source)) {
+      this.#onListLoaded(source, { first });
+      return;
+    }
+    if (typeof source !== 'string') {
+      warn('pages must be an array or a URL string.');
+      this.#onListLoaded([], { first });
+      return;
+    }
+    this.#showStatus(TEXT.loading);
+    let list;
+    try {
+      list = await this.#fetchList(source);
+    } catch (error) {
+      if (token !== this.#listToken) return;
+      warn(`Could not load the page list: ${error.message}`);
+      this.#showStatus(TEXT.failed, () => this.#loadList({ first: !this.#initialized }));
+      return;
+    }
+    if (token !== this.#listToken) return;
+    this.#onListLoaded(list, { first });
+  }
+
+  #onListLoaded(list, { first }) {
+    this.#listPending = false;
+    const currentIdIntent = this.#currentIdIntent;
+    const popIntent = this.#popIntent;
+    this.#currentIdIntent = 0;
+    this.#popIntent = 0;
+    this.#model = buildModel(list, warn);
+    this.#ui.status.hidden = true;
+    this.#ui.layout.hidden = false;
+    const model = this.#model;
+
+    if (first) {
+      const name = this.#paramName();
+      const urlId = name ? new URL(location.href).searchParams.get(name) : null;
+      const result = resolveInitialPage(model, { urlId, currentId: this.#options.currentId });
+      this.#initialized = true;
+      this.#initialId = result.kind === 'empty' ? null : result.id;
+      this.#show(result, { scroll: 'initial' });
+      return;
+    }
+    this.#listReloaded = true;
+    const shown = this.#displayed;
+    const shownId = shown && shown.kind !== 'empty' ? shown.id : null;
+    const target = (id) => (model.has(id) ? { kind: 'page', id } : { kind: 'missing', id });
+
+    // Back/forward while the list was loading counts only if it leads to
+    // another page; one that does not (e.g. the host's own "#" link) changes
+    // nothing, as it would without the reload (spec 5.5).
+    let popTo = null;
+    if (popIntent && this.#paramName() && model.size > 0) {
+      const id = this.#popTarget();
+      if (id !== shownId) popTo = id;
+    }
+    const currentId = this.#options.currentId;
+    const openCurrentId = currentIdIntent > 0 && model.size > 0 && currentId !== undefined && currentId !== null && currentId !== '';
+
+    if (popTo !== null && (!openCurrentId || popIntent > currentIdIntent)) {
+      this.#show(target(popTo), { scroll: 'popstate' });
+      return;
+    }
+    if (openCurrentId) {
+      // currentId was set (after any back/forward): open it in the new list.
+      if (popTo !== null) this.#displayed = target(popTo); // where back/forward took the URL
+      const id = String(currentId);
+      const now = this.#displayed;
+      if (now && now.kind !== 'empty' && now.id === id) {
+        this.#show(target(id), { scroll: popTo !== null ? 'popstate' : 'none' });
+      } else {
+        this.#navigate(id, '', { fromCurrentId: true });
+      }
+      return;
+    }
+    // The page on screen (including an id shown as "not found") stays if the
+    // new list has it.
+    if (shown && shown.kind !== 'empty' && model.has(shown.id)) {
+      this.#show({ kind: 'page', id: shown.id }, { scroll: 'none' });
+      return;
+    }
+    const result = resolveInitialPage(model, { currentId: this.#options.currentId });
+    this.#show(result, { scroll: 'top' });
+    const name = this.#paramName();
+    if (name && result.kind !== 'empty') history.replaceState(history.state, '', pageUrl(location.href, name, result.id));
+  }
+
+  /** After a change of urlParam, links in the sidebar and breadcrumb use the new name. */
+  #rerenderNavigation() {
+    const shown = this.#displayed;
+    if (!shown || shown.kind === 'empty' || !this.#model) return;
+    const id = shown.kind === 'page' ? shown.id : null;
+    this.#renderSidebar(id, { keepExpanded: true });
+    this.#renderBreadcrumb(id);
+    if (this.#searchQuery !== '') this.#runSearch({ show: !this.#ui.searchResults.hidden });
+  }
+
+  // ---- showing a page ----
+
+  /**
+   * @param {{kind: 'page'|'missing', id: string} | {kind: 'empty'}} target
+   * @param {{scroll: 'initial'|'switch'|'popstate'|'top'|'none', hash?: string}} how
+   */
+  #show(target, how) {
+    const nav = ++this.#navToken;
+    this.#displayed = target;
+    this.#closeSidebar();
+
+    // No pages: nothing in the toolbar or the sidebar can be used.
+    const empty = target.kind === 'empty';
+    this.#ui.toolbar.hidden = empty;
+    this.#ui.sidebar.hidden = empty;
+    if (empty) {
+      this.#ui.breadcrumb.hidden = true;
+      this.#setToc([]);
+      this.#showBodyStatus(TEXT.empty);
+      return;
+    }
+    const page = target.kind === 'page' ? this.#model.get(target.id) : undefined;
+    this.#renderSidebar(page ? page.id : null);
+    this.#renderBreadcrumb(page ? page.id : null);
+
+    if (!page) {
+      this.#setToc([]);
+      this.#showBodyStatus(TEXT.notFound);
+      this.#scroll(how, false);
+      return;
+    }
+    if (page.md !== null) {
+      this.#renderBody(page, page.md, how);
+      return;
+    }
+    if (page.src === null) {
+      this.#renderChildIndex(page, how);
+      return;
+    }
+    if (this.#bodyCache.has(page.id)) {
+      this.#renderBody(page, this.#bodyCache.get(page.id), how);
+      return;
+    }
+    this.#loadBody(page.id, nav, how);
+  }
+
+  async #loadBody(id, nav, how) {
+    const listToken = this.#listToken;
+    const generation = this.#cacheGeneration;
+    let page = this.#model.get(id);
+    this.#setToc([]);
+    this.#showBodyStatus(TEXT.loading);
+    let text;
+    try {
+      text = await this.#fetchBody(page, generation);
+    } catch (error) {
+      if (nav !== this.#navToken) return;
+      warn(`Could not load "${page.src}": ${error.message}`);
+      if (typeof this.#options.pages !== 'string') {
+        this.#showBodyError(id, how);
+        return;
+      }
+      // The signed URL may have expired: reload the list once and retry
+      // with the new src. Bodies already loaded are kept.
+      let list;
+      try {
+        list = await this.#fetchList(this.#options.pages);
+      } catch (listError) {
+        if (nav !== this.#navToken) return;
+        warn(`Could not reload the page list: ${listError.message}`);
+        this.#showBodyError(id, how);
+        return;
+      }
+      if (nav !== this.#navToken || listToken !== this.#listToken) return;
+      this.#model = buildModel(list, warn);
+      page = this.#model.get(id);
+      this.#renderSidebar(page ? id : null);
+      this.#renderBreadcrumb(page ? id : null);
+      if (!page) {
+        this.#displayed = { kind: 'missing', id };
+        this.#showBodyStatus(TEXT.notFound);
+        return;
+      }
+      if (page.md !== null) {
+        this.#renderBody(page, page.md, how);
+        return;
+      }
+      if (page.src === null) {
+        this.#renderChildIndex(page, how);
+        return;
+      }
+      try {
+        text = await this.#fetchText(page.src);
+      } catch (retryError) {
+        if (nav !== this.#navToken) return;
+        warn(`Could not load "${page.src}": ${retryError.message}`);
+        this.#showBodyError(id, how);
+        return;
+      }
+    }
+    // Keep the body even if the user has moved on, as long as it belongs to
+    // the current list (spec 5.2); only the rendering is skipped.
+    if (generation === this.#cacheGeneration && !this.#listPending) this.#bodyCache.set(page.id, text);
+    if (nav !== this.#navToken) return;
+    this.#renderBody(page, text, how);
+  }
+
+  #showBodyError(id, how) {
+    // The retry button starts over from "loading" (spec 5.2); a body that
+    // arrived meanwhile from an earlier request is used without fetching.
+    this.#showBodyStatus(TEXT.failed, () => {
+      this.#show(this.#model.has(id) ? { kind: 'page', id } : { kind: 'missing', id }, how);
+    });
+  }
+
+  #rerenderBody() {
+    const shown = this.#displayed;
+    if (!shown || shown.kind !== 'page') return;
+    const page = this.#model.get(shown.id);
+    if (!page) return;
+    if (page.md === null && page.src === null) {
+      this.#renderChildIndex(page, { scroll: 'none' });
+      return;
+    }
+    const text = page.md !== null ? page.md : this.#bodyCache.get(page.id);
+    if (text !== undefined) this.#renderBody(page, text, { scroll: 'none' });
+  }
+
+  #renderBody(page, markdown, how) {
+    const options = {
+      paramName: this.#linkParamName(),
+      baseUrl: this.#options.baseUrl,
+      documentUrl: document.baseURI, // what fetch resolves src against
+      pageUrl: location.href, // "the host page URL" of spec 5.3 (not a <base>)
+      pageOrigin: location.origin,
+      imageResolver: this.#options.imageResolver,
+    };
+    let fragment;
+    try {
+      fragment = renderMarkdown(markdown, {
+        image: (path) => {
+          try {
+            return resolveImage(path, page, options);
+          } catch (error) {
+            // Loading the raw path would resolve it against the host page,
+            // which is neither imageResolver's answer nor spec 5.3's rule.
+            warn(`imageResolver failed for "${path}": ${error.message}`);
+            return '';
+          }
+        },
+        link: (href) => classifyLink(href, page, this.#model, options),
+        pageHref: (id, hash) => pageUrl(location.href, options.paramName, id, hash),
+      });
+    } catch (error) {
+      // Never leave the previous page's body under the new sidebar/breadcrumb.
+      warn(`Could not render page "${page.id}": ${error.message}`);
+      this.#setToc([]);
+      this.#showBodyStatus(TEXT.failed);
+      return;
+    }
+    this.#markChildIndex(false);
+    this.#putBody(fragment, how);
+    this.#renderPager(page);
+  }
+
+  /**
+   * A page with neither md nor src: its direct child pages as a table (one
+   * row each) or as cards, switched from the toolbar (spec 5.4). The page's
+   * name is in the toolbar; the h1 is kept for screen readers only. Built
+   * with DOM calls after sanitizing, like the sidebar.
+   */
+  #renderChildIndex(page, how) {
+    const children = this.#model.childrenOf(page.id);
+    if (children.length === 0) {
+      this.#renderBody(page, '', how);
+      return;
+    }
+    const name = this.#linkParamName();
+    const items = children.map((id) => {
+      const child = this.#model.get(id);
+      const grandchildren = this.#model.childrenOf(id).length;
+      let meta = '';
+      if (child.md !== null) {
+        const chapters = this.#outlineOf(child).sections.filter((section) => section.level === 'h2').length;
+        if (chapters > 0) meta = TEXT.chapters(chapters);
+      } else if (child.src === null && grandchildren > 0) {
+        meta = TEXT.childPages(grandchildren);
+      }
+      const link = h(
+        'a',
+        { class: 'mpv-child-link', part: 'child-link', href: pageUrl(location.href, name, id), 'data-mpv-link': 'page', 'data-mpv-id': id },
+        h('span', { class: 'mpv-child-title', part: 'child-title' }, child.title),
+      );
+      if (child.description !== null) link.append(h('span', { class: 'mpv-child-description', part: 'child-description' }, child.description));
+      link.append(h('span', { class: 'mpv-child-meta', part: 'child-meta' }, meta));
+      return h('li', { class: 'mpv-child' }, link);
+    });
+    const fragment = document.createDocumentFragment();
+    fragment.append(
+      h('h1', { class: 'mpv-visually-hidden' }, page.title),
+      h(
+        'div',
+        { class: 'mpv-children-head', part: 'child-list-head', 'aria-hidden': 'true' },
+        h('span', {}, TEXT.columnPages),
+        h('span', {}, TEXT.columnContent),
+        h('span', {}),
+      ),
+      h('ul', { class: 'mpv-children', part: 'child-list' }, ...items),
+    );
+    this.#markChildIndex(true);
+    this.#putBody(fragment, how);
+    this.#renderPager(null);
+  }
+
+  /** Whether the body is a child index; the body gets data-index="list" or "card" for the CSS. */
+  #markChildIndex(on) {
+    this.#showingChildIndex = on;
+    if (on) this.#ui.content.dataset.index = this.#childView;
+    else delete this.#ui.content.dataset.index;
+  }
+
+  /** Every page in the order of the sidebar (top down, depth first). */
+  #pageOrder() {
+    const order = [];
+    const visit = (ids) => {
+      for (const id of ids) {
+        order.push(id);
+        visit(this.#model.childrenOf(id));
+      }
+    };
+    visit(this.#model.roots());
+    return order;
+  }
+
+  /**
+   * "Previous" and "next" at the end of a page's body, in the order of the
+   * sidebar (spec 5.4). `page` null hides them (child index, messages).
+   */
+  #renderPager(page) {
+    const pager = this.#ui.pager;
+    if (page === null) {
+      pager.hidden = true;
+      pager.replaceChildren();
+      return;
+    }
+    const order = this.#pageOrder();
+    const at = order.indexOf(page.id);
+    const name = this.#linkParamName();
+    const place = (id) => this.#model.pathTo(id).map((step) => this.#model.get(step).title).join(' › ');
+    const link = (id, which, label) =>
+      id === undefined
+        ? h('span', {})
+        : h(
+            'a',
+            { class: `mpv-pager-link mpv-pager-${which}`, part: `pager-link ${which}`, href: pageUrl(location.href, name, id), 'data-mpv-nav': id },
+            h('span', { class: 'mpv-pager-label' }, label),
+            h('span', { class: 'mpv-pager-title' }, place(id)),
+          );
+    const previous = at > 0 ? order[at - 1] : undefined;
+    const next = at >= 0 && at < order.length - 1 ? order[at + 1] : undefined;
+    pager.replaceChildren(link(previous, 'previous', TEXT.previous), link(next, 'next', TEXT.next));
+    pager.hidden = previous === undefined && next === undefined;
+  }
+
+  /**
+   * The headings (h2, h3) of a page whose body is given as `md`, with the
+   * ids they get when that page is shown, and the text under each. Used by
+   * the child index and the search. Pages given as `src` are not fetched for
+   * this (spec 5.2). Images and links are left alone: nothing is loaded and
+   * imageResolver is not called. Kept per page until the list is loaded again.
+   * @returns {{lead: string, sections: {id: string, level: string, heading: string, text: string}[]}}
+   */
+  #outlineOf(page) {
+    const empty = { lead: '', sections: [] };
+    if (page.md === null) return empty;
+    const cached = this.#outlines.get(page);
+    if (cached) return cached;
+    let fragment;
+    try {
+      fragment = renderMarkdown(
+        page.md,
+        {
+          image: () => '',
+          link: () => ({ type: 'default' }),
+          pageHref: () => '',
+        },
+        { inert: true },
+      );
+    } catch {
+      return empty;
+    }
+    const taken = new Set([...fragment.querySelectorAll('[id]')].map((el) => el.id));
+    assignHeadingIds(fragment, taken);
+    const outline = { lead: '', sections: [] };
+    for (const node of fragment.children) {
+      if (node.localName === 'h2' || node.localName === 'h3') {
+        outline.sections.push({ id: node.id, level: node.localName, heading: node.textContent.trim(), text: '' });
+        continue;
+      }
+      if (node.localName === 'h1') continue;
+      const text = node.textContent.replace(/\s+/g, ' ').trim();
+      if (!text) continue;
+      const last = outline.sections[outline.sections.length - 1];
+      if (last) last.text = last.text ? `${last.text} ${text}` : text;
+      else outline.lead = outline.lead ? `${outline.lead} ${text}` : text;
+    }
+    this.#outlines.set(page, outline);
+    return outline;
+  }
+
+  #putBody(fragment, how) {
+    this.#ui.bodyStatus.hidden = true;
+    this.#ui.content.hidden = false;
+    this.#ui.content.replaceChildren(fragment);
+
+    // Heading ids come after sanitizing (spec 5.4).
+    const taken = new Set([...this.shadowRoot.querySelectorAll('[id]')].map((el) => el.id));
+    const toc = assignHeadingIds(this.#ui.content, taken)
+      .filter((heading) => heading.localName === 'h2' || heading.localName === 'h3')
+      .map((heading) => ({ id: heading.id, level: heading.localName, text: heading.textContent.trim(), heading }));
+    this.#setToc(toc);
+    this.#scroll(how, true);
+    this.#updateTocCurrent();
+  }
+
+  // ---- scrolling (spec 5.5) ----
+
+  #scroll(how, hasBody) {
+    const name = this.#paramName();
+    switch (how.scroll) {
+      // A "#" read from the host URL only matches headings, so the host's
+      // own anchors (e.g. #main) never scroll into the body.
+      case 'initial': {
+        if (!name || !hasBody) return;
+        const target = this.#findInBody(decodeFragment(location.hash.slice(1)), { headingsOnly: true });
+        if (target) target.scrollIntoView({ block: 'start' });
+        return;
+      }
+      case 'switch': {
+        const target = how.hash ? this.#findInBody(how.hash) : null;
+        if (target) target.scrollIntoView({ block: 'start' });
+        else this.#scrollToTop();
+        return;
+      }
+      case 'popstate': {
+        const target = this.#findInBody(decodeFragment(location.hash.slice(1)), { headingsOnly: true });
+        if (target) target.scrollIntoView({ block: 'start' });
+        else this.#scrollToTop();
+        return;
+      }
+      case 'top':
+        this.#scrollToTop();
+    }
+  }
+
+  #findInBody(id, { headingsOnly = false } = {}) {
+    if (!id) return null;
+    const selector = headingsOnly ? 'h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]' : '[id]';
+    for (const el of this.#ui.content.querySelectorAll(selector)) if (el.id === id) return el;
+    return null;
+  }
+
+  #scrollToTop() {
+    if (this.#ui.frame.dataset.height === 'fixed') {
+      this.#ui.main.scrollTop = 0;
+      return;
+    }
+    const top = this.getBoundingClientRect().top;
+    const base = scrollBase(this);
+    if (!base) {
+      if (top < 0) window.scrollBy(0, top);
+      return;
+    }
+    const baseTop = base.getBoundingClientRect().top + base.clientTop;
+    if (top < baseTop) base.scrollTop -= baseTop - top;
+  }
+
+  #updateHeightMode() {
+    this.#ui.frame.dataset.height = this.#hostHasHeight() ? 'fixed' : 'auto';
+  }
+
+  // position:sticky works against the nearest ancestor that is a scroll
+  // container, even one that never scrolls (a wrapper with overflow-x:hidden,
+  // say). When something further out is what really scrolls, sticky never
+  // engages, so the side columns are moved by hand against that scroller.
+  // Without such a wrapper nothing is listened to and plain sticky does it all.
+  #updateFollow() {
+    const base = scrollBase(this);
+    const needed = this.#ui.frame.dataset.height === 'auto' && scrollContainer(this) !== base;
+    const target = needed ? (base ?? window) : null;
+    if (target !== this.#followTarget) {
+      this.#stopFollowing();
+      if (target) target.addEventListener('scroll', this.#onFollowScroll, { passive: true });
+      this.#followTarget = target;
+    }
+    this.#followBase = base;
+    this.#placeSideColumns();
+  }
+
+  #stopFollowing() {
+    if (this.#followTarget) this.#followTarget.removeEventListener('scroll', this.#onFollowScroll);
+    this.#followTarget = null;
+    this.#ui.toolbar.style.translate = '';
+    this.#ui.sidebar.style.translate = '';
+    this.#ui.toc.style.translate = '';
+  }
+
+  // The toolbar stays at the top of the view, and the side columns just
+  // under it (spec 6). Each moves down by how far the layout's top has gone
+  // above the view, but not past the layout's end.
+  #placeSideColumns() {
+    if (!this.#followTarget) return;
+    const base = this.#followBase;
+    const viewTop = base ? base.getBoundingClientRect().top + base.clientTop : 0;
+    const layout = this.#ui.layout.getBoundingClientRect();
+    const bar = this.#ui.toolbar.offsetHeight;
+    const scrolled = viewTop - layout.top;
+    for (const [part, room] of [
+      [this.#ui.toolbar, layout.height - bar],
+      [this.#ui.sidebar, layout.height - bar - this.#ui.sidebar.offsetHeight],
+      [this.#ui.toc, layout.height - bar - this.#ui.toc.offsetHeight],
+    ]) {
+      // Only the sticky parts: the narrow drawer stays where it is.
+      const sticky = getComputedStyle(part).position === 'sticky';
+      const offset = sticky ? Math.max(0, Math.min(scrolled, room)) : 0;
+      part.style.translate = offset > 0 ? `0 ${offset}px` : '';
+    }
+  }
+
+  #hostHasHeight() {
+    if (document.compatMode !== 'BackCompat') return this.#ui.probe.offsetHeight > 0;
+    // Quirks mode resolves the probe's height:100% against the viewport even
+    // when the host has no height. Instead, let our content count as empty
+    // for a moment: an auto-height host then collapses to its padding.
+    // (The probe itself is hidden in quirks mode, see the constructor.)
+    const { frame } = this.#ui;
+    frame.style.setProperty('contain', 'size', 'important');
+    frame.style.setProperty('height', 'auto', 'important');
+    const style = getComputedStyle(this);
+    const inner = this.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom);
+    frame.style.removeProperty('contain');
+    frame.style.removeProperty('height');
+    return inner > 0;
+  }
+
+  // ---- navigation ----
+
+  /**
+   * Switching pages from the sidebar, breadcrumb, body links or currentId.
+   * Returns whether another page was shown.
+   */
+  #navigate(id, hash, { fromCurrentId = false } = {}) {
+    if (!this.#model || this.#model.size === 0) return false;
+    const shown = this.#displayed;
+    if (shown && shown.kind !== 'empty' && shown.id === id) {
+      if (fromCurrentId) return false;
+      if (hash && this.#findInBody(hash)) this.#goToHash(hash);
+      else this.#scrollToTop();
+      this.#closeSidebar();
+      return false;
+    }
+    const name = this.#paramName();
+    if (name) history.pushState(history.state, '', pageUrl(location.href, name, id, hash));
+    this.#show(this.#model.has(id) ? { kind: 'page', id } : { kind: 'missing', id }, { scroll: 'switch', hash });
+    return true;
+  }
+
+  #goToHash(hash) {
+    const target = this.#findInBody(hash);
+    if (!target) return;
+    target.scrollIntoView({ block: 'start' });
+    this.#updateTocCurrent();
+    if (this.#paramName()) {
+      const url = new URL(location.href);
+      url.hash = `#${encodeURIComponent(hash)}`;
+      history.replaceState(history.state, '', url);
+    }
+  }
+
+  #handlePopState() {
+    const name = this.#paramName();
+    if (!name || !this.#initialized) return;
+    if (this.#listPending) {
+      this.#popIntent = ++this.#intentCount;
+      return;
+    }
+    if (!this.#model || this.#model.size === 0) return;
+    const target = this.#popTarget();
+    const shown = this.#displayed;
+    const shownId = shown && shown.kind !== 'empty' ? shown.id : null;
+    if (target === shownId) return;
+    this.#show(this.#model.has(target) ? { kind: 'page', id: target } : { kind: 'missing', id: target }, { scroll: 'popstate' });
+  }
+
+  /** The page that back/forward leads to (spec 5.5). */
+  #popTarget() {
+    const fromUrl = new URL(location.href).searchParams.get(this.#paramName());
+    if (fromUrl !== null) return fromUrl;
+    // The page opened first. If it is not in the list, it is still used
+    // (it was shown as "not found" then) until pages/fetch changed and the
+    // list was loaded again; after that, spec 5.1-3 applies. Reloading the
+    // same list for an expired signed URL does not count as a change.
+    const initial = this.#initialId;
+    const usable = initial !== null && (this.#model.has(initial) || !this.#listReloaded);
+    return usable ? initial : this.#model.firstPageId();
+  }
+
+  #handleClick(event) {
+    const target = event.target instanceof Element ? event.target : null;
+    if (!target) return;
+    // Only our own parts act as controls. The body can carry the same class
+    // names, so each control is checked against the element we created.
+    const inBody = this.#ui.content.contains(target);
+
+    const toggle = target.closest('.mpv-toggle');
+    if (toggle && this.#ui.tree.contains(toggle)) {
+      const id = toggle.dataset.mpvToggle;
+      if (this.#expanded.has(id)) this.#expanded.delete(id);
+      else this.#expanded.add(id);
+      const shown = this.#displayed;
+      this.#renderSidebar(shown && shown.kind === 'page' ? shown.id : null, { keepExpanded: true });
+      return;
+    }
+    // The same button opens and closes its column (spec 6): wide, the
+    // sidebar column; narrow, the sidebar laid over the body.
+    if (target.closest('.mpv-sidebar-toggle') === this.#ui.sidebarToggle) {
+      if (this.#isNarrow()) this.#ui.frame.toggleAttribute('data-sidebar-open');
+      else this.#ui.frame.toggleAttribute('data-sidebar-closed');
+      this.#updateToolbar();
+      this.#placeSideColumns();
+      return;
+    }
+    if (target.closest('.mpv-toc-toggle') === this.#ui.tocToggle) {
+      this.#ui.frame.toggleAttribute('data-toc-closed');
+      this.#updateToolbar();
+      this.#placeSideColumns();
+      return;
+    }
+    if (target.closest('.mpv-view-toggle') === this.#ui.viewToggle) {
+      this.#childView = this.#childView === 'list' ? 'card' : 'list';
+      this.#rerenderBody();
+      return;
+    }
+    if (target === this.#ui.backdrop) {
+      this.#closeSidebar();
+      return;
+    }
+
+    const link = target.closest('a[href], area[href]');
+    if (!link || event.defaultPrevented) return;
+    if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+
+    if (!inBody && link.dataset.mpvNav !== undefined) {
+      event.preventDefault();
+      if (this.#ui.searchResults.contains(link)) {
+        // Chosen: the search is done, and keys scroll the page again.
+        this.#clearSearch();
+        this.#ui.search.blur();
+      }
+      this.#navigate(link.dataset.mpvNav, link.dataset.mpvNavHash || '');
+      this.#closeSidebar();
+      return;
+    }
+    if (!inBody && link.dataset.mpvToc !== undefined) {
+      event.preventDefault();
+      this.#goToHash(link.dataset.mpvToc);
+      this.#ui.tocMobile.open = false;
+      return;
+    }
+    if (!inBody) return;
+    const kind = link.dataset.mpvLink;
+    if (kind === 'page') {
+      event.preventDefault();
+      this.#navigate(link.dataset.mpvId, link.dataset.mpvHash || '');
+    } else if (kind === 'hash') {
+      event.preventDefault();
+      this.#goToHash(link.dataset.mpvHash || '');
+    }
+  }
+
+  #closeSidebar() {
+    if (!this.#ui.frame.hasAttribute('data-sidebar-open')) return;
+    this.#ui.frame.removeAttribute('data-sidebar-open');
+    this.#updateToolbar();
+  }
+
+  /** Narrow layout (spec 6): judged by the viewer's own width, like the container query. */
+  #isNarrow() {
+    return this.#ui.frame.getBoundingClientRect().width < 768;
+  }
+
+  /**
+   * The toolbar follows the state (spec 6). Each column's button stays where
+   * it is and its arrow shows which way it will move the column. The
+   * right-hand button is the table of contents' on a page that has one and
+   * the list/card switch on a child index. Also keeps --_bar-h, the
+   * toolbar's height, for the columns that stay in view under it.
+   */
+  #updateToolbar() {
+    const frame = this.#ui.frame;
+    const sidebarShown = this.#isNarrow() ? frame.hasAttribute('data-sidebar-open') : !frame.hasAttribute('data-sidebar-closed');
+    this.#setToggle(this.#ui.sidebarToggle, sidebarShown, sidebarShown ? 'sidebarClose' : 'sidebarOpen');
+    const tocShown = !frame.hasAttribute('data-toc-closed');
+    this.#ui.tocToggle.hidden = this.#tocItems.length === 0;
+    this.#setToggle(this.#ui.tocToggle, tocShown, tocShown ? 'tocClose' : 'tocOpen');
+    this.#ui.viewToggle.hidden = !this.#showingChildIndex;
+    const viewLabel = this.#childView === 'list' ? TEXT.viewCard : TEXT.viewList;
+    if (this.#ui.viewToggle.textContent !== viewLabel) this.#ui.viewToggle.textContent = viewLabel;
+    const barHeight = `${this.#ui.toolbar.offsetHeight}px`;
+    if (frame.style.getPropertyValue('--_bar-h') !== barHeight) frame.style.setProperty('--_bar-h', barHeight);
+  }
+
+  /** `kind` names both the icon and the label (TEXT and ICONS share the keys). */
+  #setToggle(button, expanded, kind) {
+    const value = String(expanded);
+    if (button.getAttribute('aria-expanded') !== value) button.setAttribute('aria-expanded', value);
+    if (button.dataset.mpvIcon === kind) return;
+    button.dataset.mpvIcon = kind;
+    button.setAttribute('aria-label', TEXT[kind]);
+    button.title = TEXT[kind];
+    button.replaceChildren(ICONS[kind]());
+  }
+
+  // ---- search (spec 5.4) ----
+
+  /**
+   * Searches page titles, descriptions, headings and body text, and lists
+   * the matches under the search box in the toolbar. Bodies given as `src`
+   * are not fetched for this; only their titles and descriptions count.
+   * `show` is false when the results are only made again (a new list).
+   */
+  #runSearch({ show = true } = {}) {
+    const query = this.#ui.search.value.trim();
+    if (query !== this.#searchQuery) this.#searchSelected = 0;
+    this.#searchQuery = query;
+    this.#searchModel = this.#model;
+    const results = this.#ui.searchResults;
+    const words = searchWords(query);
+    if (words.length === 0 || !this.#model) {
+      results.hidden = true;
+      results.replaceChildren();
+      return;
+    }
+    const model = this.#model;
+    const found = [];
+    const visit = (ids) => {
+      for (const id of ids) {
+        const page = model.get(id);
+        if (containsAll(`${page.title} ${page.description ?? ''}`, words)) {
+          found.push({ rank: 0, page, hash: '', heading: null, text: page.description && containsAll(page.description, words) ? page.description : null });
+        }
+        const outline = this.#outlineOf(page);
+        if (outline.lead && containsAll(outline.lead, words)) found.push({ rank: 2, page, hash: '', heading: null, text: outline.lead });
+        for (const section of outline.sections) {
+          if (containsAll(section.heading, words)) found.push({ rank: 1, page, hash: section.id, heading: section.heading, text: null });
+          else if (section.text && containsAll(`${section.heading} ${section.text}`, words)) found.push({ rank: 2, page, hash: section.id, heading: section.heading, text: section.text });
+        }
+        visit(model.childrenOf(id));
+      }
+    };
+    visit(model.roots());
+    found.sort((a, b) => a.rank - b.rank);
+
+    const name = this.#linkParamName();
+    if (found.length === 0) {
+      results.replaceChildren(h('p', { class: 'mpv-search-empty', part: 'search-empty' }, TEXT.noResults(query)));
+    } else {
+      results.replaceChildren(
+        h(
+          'ul',
+          { class: 'mpv-search-list' },
+          ...found.slice(0, SEARCH_RESULTS_SHOWN).map((result) => {
+            const link = h('a', { class: 'mpv-search-result', part: 'search-result', href: pageUrl(location.href, name, result.page.id, result.hash), 'data-mpv-nav': result.page.id });
+            if (result.hash) link.dataset.mpvNavHash = result.hash;
+            // Where the page is (top level down), so pages with the same title can be told apart.
+            const place = model.pathTo(result.page.id).map((id) => model.get(id).title).join(' › ');
+            link.append(h('span', { class: 'mpv-search-page' }, result.rank === 0 ? markedText(place, words) : place));
+            if (result.heading !== null) link.append(h('span', { class: 'mpv-search-heading' }, markedText(result.heading, words)));
+            if (result.text !== null) link.append(h('span', { class: 'mpv-search-snippet' }, snippetOf(result.text, words)));
+            return h('li', {}, link);
+          }),
+        ),
+      );
+    }
+    this.#markSearchSelected();
+    if (show) results.hidden = false;
+  }
+
+  #searchLinks() {
+    return [...this.#ui.searchResults.querySelectorAll('.mpv-search-result')];
+  }
+
+  /** Marks the selected result; `reveal` scrolls the results box (never the host page) to it. */
+  #markSearchSelected({ reveal = false } = {}) {
+    const links = this.#searchLinks();
+    this.#searchSelected = Math.min(this.#searchSelected, Math.max(0, links.length - 1));
+    const box = this.#ui.searchResults;
+    links.forEach((link, index) => {
+      const selected = index === this.#searchSelected;
+      link.classList.toggle('mpv-search-selected', selected);
+      link.setAttribute('aria-selected', String(selected));
+      if (selected && reveal) {
+        const top = link.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop;
+        if (top < box.scrollTop) box.scrollTop = top;
+        else if (top + link.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = top + link.offsetHeight - box.clientHeight;
+      }
+    });
+  }
+
+  #hideSearchResults() {
+    this.#ui.searchResults.hidden = true;
+  }
+
+  #clearSearch() {
+    this.#ui.search.value = '';
+    this.#runSearch();
+  }
+
+  #onSearchKey(event) {
+    if (event.isComposing) return;
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      if (this.#ui.search.value !== '') this.#clearSearch();
+      else this.#ui.search.blur();
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      const count = this.#searchLinks().length;
+      if (count === 0) return;
+      event.preventDefault();
+      this.#ui.searchResults.hidden = false;
+      this.#searchSelected = (this.#searchSelected + (event.key === 'ArrowDown' ? 1 : -1) + count) % count;
+      this.#markSearchSelected({ reveal: true });
+    } else if (event.key === 'Enter') {
+      const selected = this.#searchLinks()[this.#searchSelected];
+      if (selected) {
+        event.preventDefault();
+        selected.click();
+      }
+    }
+  }
+
+
+  // ---- rendering parts ----
+
+  #showStatus(text, retry) {
+    this.#ui.layout.hidden = true;
+    this.#ui.status.hidden = false;
+    this.#ui.statusText.textContent = text;
+    this.#ui.statusRetry.hidden = !retry;
+    this.#ui.statusRetry.onclick = retry || null;
+  }
+
+  #showBodyStatus(text, retry) {
+    this.#markChildIndex(false);
+    this.#renderPager(null);
+    this.#updateToolbar();
+    this.#ui.content.hidden = true;
+    this.#ui.content.replaceChildren();
+    this.#ui.bodyStatus.hidden = false;
+    this.#ui.bodyStatusText.textContent = text;
+    this.#ui.bodyRetry.hidden = !retry;
+    this.#ui.bodyRetry.onclick = retry || null;
+  }
+
+  #renderSidebar(currentId, { keepExpanded = false } = {}) {
+    const model = this.#model;
+    // Open everything from the top level down to the current page.
+    if (currentId !== null && !keepExpanded) {
+      for (const id of model.pathTo(currentId)) this.#expanded.add(id);
+    }
+    const name = this.#linkParamName();
+    const build = (ids) => {
+      const list = document.createElement('ul');
+      for (const id of ids) {
+        const page = model.get(id);
+        const children = model.childrenOf(id);
+        const item = document.createElement('li');
+        const row = document.createElement('div');
+        row.className = 'mpv-row';
+        if (children.length > 0) {
+          const toggle = document.createElement('button');
+          toggle.type = 'button';
+          toggle.className = 'mpv-toggle';
+          toggle.setAttribute('part', 'toggle');
+          toggle.dataset.mpvToggle = id;
+          toggle.setAttribute('aria-label', `${page.title} ${TEXT.toggle}`);
+          toggle.setAttribute('aria-expanded', String(this.#expanded.has(id)));
+          row.append(toggle);
+        } else {
+          const space = document.createElement('span');
+          space.className = 'mpv-toggle-space';
+          row.append(space);
+        }
+        const link = document.createElement('a');
+        link.className = 'mpv-node-link';
+        link.href = pageUrl(location.href, name, id);
+        link.dataset.mpvNav = id;
+        link.textContent = page.title;
+        link.setAttribute('part', id === currentId ? 'page-link current' : 'page-link');
+        if (id === currentId) link.setAttribute('aria-current', 'page');
+        row.append(link);
+        item.append(row);
+        if (children.length > 0) {
+          const sub = build(children);
+          sub.hidden = !this.#expanded.has(id);
+          item.append(sub);
+        }
+        list.append(item);
+      }
+      return list;
+    };
+    const tree = build(model.roots());
+    tree.className = 'mpv-tree';
+    this.#ui.tree.replaceWith(tree);
+    this.#ui.tree = tree;
+    // Results from an earlier list are made again.
+    if (this.#searchQuery !== '' && this.#searchModel !== model) this.#runSearch({ show: !this.#ui.searchResults.hidden });
+    this.#placeSideColumns();
+  }
+
+  #renderBreadcrumb(currentId) {
+    const nav = this.#ui.breadcrumb;
+    const list = nav.querySelector('ol');
+    if (currentId === null) {
+      nav.hidden = true;
+      list.replaceChildren();
+      return;
+    }
+    nav.hidden = false;
+    const name = this.#linkParamName();
+    const items = this.#model.pathTo(currentId).map((id) => {
+      const page = this.#model.get(id);
+      const item = document.createElement('li');
+      if (id === currentId) {
+        // The page's own name: the title line of the toolbar (spec 6).
+        item.className = 'mpv-crumb-current';
+        const span = document.createElement('span');
+        span.setAttribute('part', 'breadcrumb-item current');
+        span.setAttribute('aria-current', 'page');
+        span.textContent = page.title;
+        item.append(span);
+      } else {
+        const link = document.createElement('a');
+        link.setAttribute('part', 'breadcrumb-item');
+        link.href = pageUrl(location.href, name, id);
+        link.dataset.mpvNav = id;
+        link.textContent = page.title;
+        item.append(link);
+      }
+      return item;
+    });
+    list.replaceChildren(...items);
+  }
+
+  /**
+   * @param {{id: string, level: string, text: string, heading?: Element}[]} entries
+   */
+  #setToc(entries) {
+    const empty = entries.length === 0;
+    this.#ui.toc.hidden = empty;
+    this.#ui.tocMobile.hidden = empty;
+    this.#ui.tocMobile.open = false;
+    // Each h3 belongs to the h2 before it (group = that h2's index; -1 before any h2).
+    let group = -1;
+    this.#tocItems = entries.map((entry, index) => {
+      if (entry.level === 'h2') group = index;
+      return { ...entry, group, links: [], items: [] };
+    });
+    for (const list of this.#ui.tocLists) {
+      list.replaceChildren(
+        ...this.#tocItems.map((entry) => {
+          const item = document.createElement('li');
+          const link = document.createElement('a');
+          link.href = `#${encodeURIComponent(entry.id)}`;
+          link.className = `mpv-toc-${entry.level}`;
+          link.setAttribute('part', `toc-link toc-${entry.level}`);
+          link.dataset.mpvToc = entry.id;
+          link.textContent = entry.text;
+          item.append(link);
+          entry.links.push(link);
+          entry.items.push(item);
+          return item;
+        }),
+      );
+    }
+    this.#updateToolbar();
+    this.#updateTocCurrent();
+    this.#placeSideColumns();
+  }
+
+  /**
+   * Marks the heading being read in the table of contents and shows only the
+   * h3 entries of its h2 (spec 5.4). "Being read": the last heading whose top
+   * has passed a line a little below the top of the visible area; at the end
+   * of the scroll, the last heading in view.
+   */
+  #updateTocCurrent() {
+    const items = this.#tocItems;
+    if (items.length === 0) return;
+    const view = this.#readingView();
+    // Just below the top: a heading taken there (by the table of contents,
+    // a link or a search result) is the one marked, not the next one.
+    const line = view.top + 16;
+    let current = 0;
+    items.forEach((item, index) => {
+      if (item.heading && item.heading.getBoundingClientRect().top <= line) current = index;
+    });
+    if (view.atEnd) {
+      for (let index = items.length - 1; index > current; index--) {
+        if (items[index].heading && items[index].heading.getBoundingClientRect().top < view.bottom) {
+          current = index;
+          break;
+        }
+      }
+    }
+    const group = items[current].group;
+    items.forEach((item, index) => {
+      const on = index === current;
+      for (const link of item.links) {
+        link.setAttribute('part', `toc-link toc-${item.level}${on ? ' current' : ''}`);
+        if (on) link.setAttribute('aria-current', 'location');
+        else link.removeAttribute('aria-current');
+      }
+      const shown = item.level !== 'h3' || item.group === -1 || item.group === group;
+      for (const li of item.items) li.hidden = !shown;
+    });
+  }
+
+  /** The visible part of whatever the body scrolls in (spec 5.5), and whether it is scrolled to the end. */
+  #readingView() {
+    const end = (scrolled, top, height, total) => scrolled > 0 && top + height >= total - 2;
+    if (this.#ui.frame.dataset.height === 'fixed') {
+      const main = this.#ui.main;
+      const box = main.getBoundingClientRect();
+      return { top: box.top, bottom: box.bottom, atEnd: end(main.scrollTop, main.scrollTop, main.clientHeight, main.scrollHeight) };
+    }
+    // The toolbar stays over the top of the view (spec 6): the body is read below it.
+    const below = (top) => Math.max(top, this.#ui.toolbar.getBoundingClientRect().bottom);
+    const base = scrollBase(this);
+    if (base) {
+      const box = base.getBoundingClientRect();
+      return { top: below(box.top + base.clientTop), bottom: box.top + base.clientTop + base.clientHeight, atEnd: end(base.scrollTop, base.scrollTop, base.clientHeight, base.scrollHeight) };
+    }
+    const root = document.scrollingElement || document.documentElement;
+    return { top: below(0), bottom: window.innerHeight, atEnd: end(window.scrollY, window.scrollY, window.innerHeight, root.scrollHeight) };
+  }
+}
+
+/** The body's overflow applies to the window unless the root element sets its own. */
+function bodyOverflowGoesToWindow() {
+  const root = getComputedStyle(document.documentElement);
+  return root.overflowX === 'visible' && root.overflowY === 'visible';
+}
+
+/**
+ * The scroll base of spec 5.5: the nearest ancestor (crossing shadow roots)
+ * that really scrolls vertically, i.e. its content is taller than its box.
+ * null means the window.
+ */
+function scrollBase(element) {
+  for (let node = parentOf(element); node && node !== document.documentElement; node = parentOf(node)) {
+    if (node === document.body && bodyOverflowGoesToWindow()) return null;
+    const { overflowY } = getComputedStyle(node);
+    if (overflowY !== 'visible' && overflowY !== 'clip' && node.scrollHeight > node.clientHeight + 1) return node;
+  }
+  return null;
+}
+
+/** What position:sticky works against: the nearest scroll container, scrolling or not. null means the window. */
+function scrollContainer(element) {
+  for (let node = parentOf(element); node && node !== document.documentElement; node = parentOf(node)) {
+    if (node === document.body && bodyOverflowGoesToWindow()) return null;
+    const { overflowX, overflowY } = getComputedStyle(node);
+    if ([overflowX, overflowY].some((value) => value !== 'visible' && value !== 'clip')) return node;
+  }
+  return null;
+}
+
+function parentOf(node) {
+  if (node.parentElement) return node.parentElement;
+  const root = node.getRootNode();
+  return root instanceof ShadowRoot ? root.host : null;
+}
+
+export function defineElement() {
+  if (!customElements.get(TAG)) customElements.define(TAG, MdPagesViewerElement);
+}

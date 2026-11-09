@@ -1,0 +1,1010 @@
+/* Everything lives in the shadow root (spec 5.8). */
+
+:host {
+  display: block;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+/* Zero-width float with height:100%: its height is 0 unless the host has a
+   definite height. The element reads it to pick the height mode (spec 6). */
+.mpv-probe {
+  float: left;
+  width: 0;
+  height: 100%;
+}
+
+/* Reset everything inherited from the host page except color, font-family,
+   visibility and pointer-events (spec 5.8). Sizes use px/em only. */
+.mpv {
+  all: initial;
+  /* "all" leaves direction alone; an RTL host would otherwise flip the layout. */
+  direction: ltr;
+  unicode-bidi: normal;
+  display: block;
+  box-sizing: border-box;
+  container-type: inline-size;
+  /* Our z-index values compete only inside the viewer, never with the host's. */
+  isolation: isolate;
+  /* An undefined variable makes these "unset", i.e. inherited from the host. */
+  color: var(--mpv-color-text);
+  font-family: var(--mpv-font-family);
+  visibility: inherit;
+  pointer-events: inherit;
+  font-size: var(--mpv-font-size, 16px);
+  line-height: 1.7;
+  background: var(--mpv-color-bg, transparent);
+  --_space: var(--mpv-spacing, 16px);
+  --_accent: var(--mpv-color-accent, #2563eb);
+  --_border: var(--mpv-color-border, rgba(127, 127, 127, 0.3));
+  --_muted: color-mix(in srgb, currentColor 60%, transparent);
+  --_tint: color-mix(in srgb, currentColor 6%, transparent);
+}
+
+.mpv *,
+.mpv *::before,
+.mpv *::after {
+  box-sizing: border-box;
+}
+
+.mpv[data-height='fixed'] {
+  height: 100%;
+}
+
+/* ---- whole-area status (page list loading / error) ---- */
+
+.mpv-status,
+.mpv-body-status {
+  padding: calc(var(--_space) * 2) var(--_space);
+  text-align: center;
+  color: var(--_muted);
+}
+
+.mpv-status p,
+.mpv-body-status p {
+  margin: 0 0 0.75em;
+}
+
+.mpv-button {
+  font: inherit;
+  font-size: 0.9em;
+  color: inherit;
+  background: var(--_tint);
+  border: 1px solid var(--_border);
+  border-radius: 6px;
+  padding: 0.35em 1em;
+  cursor: pointer;
+}
+
+.mpv-button:hover {
+  border-color: var(--_accent);
+}
+
+/* ---- layout (spec 6): the toolbar over the three columns ---- */
+
+.mpv-layout {
+  position: relative;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto 1fr;
+}
+
+.mpv[data-height='fixed'] .mpv-layout {
+  height: 100%;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+/* Above the narrow drawer and its backdrop (z-index 3 and 2), which open
+   under it, so the toolbar and the search results stay usable. */
+.mpv-toolbar {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  position: relative;
+  z-index: 4;
+}
+
+.mpv-sidebar {
+  grid-column: 1;
+  grid-row: 2;
+  width: var(--mpv-sidebar-width, 260px);
+  overflow-y: auto;
+}
+
+.mpv-main {
+  grid-column: 2;
+  grid-row: 2;
+  min-width: 0;
+  border-left: 1px solid var(--_border);
+  padding: 0 calc(var(--_space) * 1.5) calc(var(--_space) * 3);
+}
+
+.mpv-toc {
+  grid-column: 3;
+  grid-row: 2;
+  width: 220px;
+  border-left: 1px solid var(--_border);
+  overflow-y: auto;
+}
+
+/* Height not set by the host: grow with the body. The toolbar stays at the
+   top of the view and the side columns just under it. */
+.mpv[data-height='auto'] .mpv-toolbar {
+  position: sticky;
+  top: 0;
+  background: var(--mpv-color-bg, Canvas);
+}
+
+.mpv[data-height='auto'] .mpv-sidebar,
+.mpv[data-height='auto'] .mpv-toc {
+  position: sticky;
+  top: var(--_bar-h, 0px);
+  align-self: start;
+  max-height: calc(100vh - var(--_bar-h, 0px));
+}
+
+/* A heading or anchor jumped to lands just below the toolbar, not under it. */
+.mpv[data-height='auto'] .mpv-content [id] {
+  scroll-margin-top: calc(var(--_bar-h, 0px) + 8px);
+}
+
+/* Height set by the host: each column scrolls on its own under the toolbar. */
+.mpv[data-height='fixed'] .mpv-sidebar,
+.mpv[data-height='fixed'] .mpv-main,
+.mpv[data-height='fixed'] .mpv-toc {
+  height: 100%;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+/* The heading row of the side columns ("ページ", "目次") and of the child
+   index table: one height in px, so the rows line up across the columns
+   whatever the font size. */
+.mpv-column-head,
+.mpv-content .mpv-children-head {
+  height: calc(var(--_space) * 2.25);
+  align-items: center;
+  border-bottom: 1px solid var(--_border);
+  color: var(--_muted);
+}
+
+.mpv-column-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  padding: 0 calc(var(--_space) * 0.9);
+  font-size: 0.8em;
+  background: var(--mpv-color-bg, Canvas);
+}
+
+/* ---- sidebar tree ---- */
+
+.mpv-tree,
+.mpv-tree ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mpv-tree ul {
+  padding-left: 1em;
+}
+
+.mpv-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.15em;
+}
+
+.mpv-toggle,
+.mpv-toggle-space {
+  flex: none;
+  width: 1.5em;
+  height: 1.9em;
+}
+
+.mpv-toggle {
+  font: inherit;
+  color: var(--_muted);
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  border-radius: 4px;
+}
+
+.mpv-toggle::before {
+  content: '';
+  display: inline-block;
+  width: 0.4em;
+  height: 0.4em;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.15s;
+}
+
+.mpv-toggle[aria-expanded='true']::before {
+  transform: rotate(45deg);
+}
+
+.mpv-toggle:hover {
+  background: var(--_tint);
+}
+
+.mpv-node-link {
+  flex: 1;
+  min-width: 0;
+  display: block;
+  padding: 0.2em 0.5em;
+  border-radius: 4px;
+  color: inherit;
+  text-decoration: none;
+  font-size: 0.925em;
+  overflow-wrap: anywhere;
+}
+
+.mpv-node-link:hover {
+  background: var(--_tint);
+}
+
+.mpv-node-link[aria-current='page'] {
+  color: var(--_accent);
+  font-weight: 600;
+  background: color-mix(in srgb, var(--_accent) 10%, transparent);
+}
+
+.mpv-sidebar > .mpv-tree {
+  padding: calc(var(--_space) * 0.5) calc(var(--_space) * 0.5) var(--_space);
+}
+
+/* ---- toolbar (spec 6): sidebar button, where the page is, search,
+   and the button for the right-hand side ---- */
+
+.mpv-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 0.6em;
+  min-height: 3.4em;
+  padding: 0.5em calc(var(--_space) * 0.75);
+  border-bottom: 1px solid var(--_border);
+}
+
+.mpv-tool {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 2.15em;
+  padding: 0 0.75em;
+  font: inherit;
+  font-size: 0.875em;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--_border);
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.mpv-tool:hover {
+  background: var(--_tint);
+}
+
+.mpv-sidebar-toggle,
+.mpv-toc-toggle {
+  width: 2.15em;
+  padding: 0;
+  color: var(--_muted);
+}
+
+.mpv-sidebar-toggle:hover,
+.mpv-toc-toggle:hover {
+  color: inherit;
+}
+
+.mpv-tool svg {
+  width: 1.2em;
+  height: 1.2em;
+}
+
+/* Where the page is: the parents on a small line, the page's name below.
+   Room for both lines is kept on every page, so the toolbar never changes
+   height while moving between pages. */
+.mpv-breadcrumb {
+  flex: 1;
+  min-width: 0;
+  min-height: 2.6em;
+  display: flex;
+  align-items: center;
+}
+
+.mpv-breadcrumb > ol {
+  flex: 1;
+  min-width: 0;
+}
+
+.mpv-breadcrumb ol {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  line-height: 1.35;
+}
+
+.mpv-breadcrumb li {
+  min-width: 0;
+  font-size: 0.8em;
+}
+
+.mpv-breadcrumb li + li::before {
+  content: '›';
+  margin: 0 0.45em;
+  color: var(--_muted);
+}
+
+.mpv-breadcrumb a {
+  color: var(--_muted);
+  text-decoration: none;
+}
+
+.mpv-breadcrumb a:hover {
+  color: var(--_accent);
+  text-decoration: underline;
+}
+
+.mpv-breadcrumb .mpv-crumb-current {
+  flex-basis: 100%;
+  font-size: 1.1em;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mpv-breadcrumb .mpv-crumb-current::before {
+  content: none;
+}
+
+/* ---- search (spec 5.4) ---- */
+
+.mpv-search-box {
+  position: relative;
+  flex: 0 1 15em;
+  min-width: 7em;
+  display: flex;
+  align-items: center;
+}
+
+.mpv-search-box > svg {
+  position: absolute;
+  left: 0.65em;
+  width: 1em;
+  height: 1em;
+  color: var(--_muted);
+  pointer-events: none;
+}
+
+.mpv-search {
+  width: 100%;
+  height: 2.15em;
+  font: inherit;
+  font-size: 0.875em;
+  color: inherit;
+  background: transparent;
+  border: 1px solid var(--_border);
+  border-radius: 8px;
+  padding: 0 2em 0 2.1em;
+}
+
+.mpv-search::placeholder {
+  color: var(--_muted);
+}
+
+.mpv-search:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--_accent) 40%, transparent);
+  outline-offset: 0;
+  border-color: var(--_accent);
+}
+
+.mpv-search-key {
+  position: absolute;
+  right: 0.6em;
+  font: inherit;
+  font-size: 0.7em;
+  line-height: 1.5;
+  color: var(--_muted);
+  border: 1px solid var(--_border);
+  border-radius: 4px;
+  padding: 0 0.4em;
+  pointer-events: none;
+}
+
+.mpv-search:focus ~ .mpv-search-key,
+.mpv-search:not(:placeholder-shown) ~ .mpv-search-key {
+  display: none;
+}
+
+.mpv-search-results {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 5;
+  width: max(100%, min(26em, 100cqw - 2em));
+  max-height: 22em;
+  overflow-y: auto;
+  padding: 0.3em;
+  color: var(--mpv-color-text, CanvasText);
+  background: var(--mpv-color-bg, Canvas);
+  border: 1px solid var(--_border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+.mpv-search-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.mpv-search-result {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1em;
+  padding: 0.45em 0.6em;
+  border-radius: 6px;
+  color: inherit;
+  text-decoration: none;
+  font-size: 0.9em;
+  overflow-wrap: anywhere;
+}
+
+.mpv-search-result:hover,
+.mpv-search-result:focus-visible,
+.mpv-search-result.mpv-search-selected {
+  background: var(--_tint);
+}
+
+.mpv-search-page {
+  font-weight: 600;
+}
+
+.mpv-search-page:not(:last-child) {
+  color: var(--_muted);
+  font-size: 0.85em;
+  font-weight: 400;
+}
+
+.mpv-search-heading {
+  font-weight: 600;
+}
+
+.mpv-search-snippet {
+  color: var(--_muted);
+  font-size: 0.85em;
+  line-height: 1.5;
+}
+
+.mpv-search-result mark {
+  color: inherit;
+  background: color-mix(in srgb, var(--_accent) 20%, transparent);
+  border-radius: 2px;
+  padding: 0 0.1em;
+}
+
+.mpv-search-empty {
+  margin: 0.4em 0.5em;
+  color: var(--_muted);
+  font-size: 0.85em;
+}
+
+/* ---- table of contents ---- */
+
+.mpv-toc > .mpv-toc-list {
+  padding: calc(var(--_space) * 0.5) calc(var(--_space) * 0.5) var(--_space);
+  font-size: 0.875em;
+}
+
+.mpv-toc-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mpv-toc-list a {
+  display: block;
+  padding: 0.15em 0 0.15em 0.6em;
+  border-left: 2px solid transparent;
+  color: var(--_muted);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.mpv-toc-list a:hover {
+  color: var(--_accent);
+}
+
+.mpv-toc-list .mpv-toc-h3 {
+  padding-left: 1.6em;
+}
+
+/* The heading being read (spec 5.4). */
+.mpv-toc-list a[aria-current] {
+  color: var(--_accent);
+  border-left-color: var(--_accent);
+}
+
+/* Closed columns (spec 6): the wide layout only; narrow keeps its drawer
+   and folded table of contents. */
+@container (min-width: 768px) {
+  .mpv[data-sidebar-closed] .mpv-sidebar,
+  .mpv[data-toc-closed] .mpv-toc {
+    display: none;
+  }
+
+  .mpv[data-sidebar-closed] .mpv-main {
+    border-left: 0;
+  }
+}
+
+.mpv-toc-mobile {
+  display: none;
+  margin: var(--_space) 0 0;
+  border: 1px solid var(--_border);
+  border-radius: 6px;
+  padding: 0.4em 0.8em;
+  font-size: 0.9em;
+}
+
+.mpv-toc-mobile summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.mpv-toc-mobile .mpv-toc-list {
+  margin-top: 0.4em;
+}
+
+.mpv-backdrop {
+  display: none;
+}
+
+/* ---- narrow (spec 6): judged by the element's own width ---- */
+
+@container (max-width: 767.98px) {
+  .mpv-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mpv-main {
+    grid-column: 1;
+    border-left: 0;
+    padding: 0 var(--_space) calc(var(--_space) * 2);
+  }
+
+  .mpv-toc,
+  .mpv-toc-toggle,
+  .mpv-search-key {
+    display: none;
+  }
+
+  .mpv-toc-mobile {
+    display: block;
+  }
+
+  .mpv-search-box {
+    flex-basis: 9em;
+  }
+
+  /* The sidebar opens over the body, in the same cell, under the toolbar, so
+     its button stays in place. It fills the cell, but no more than the view:
+     while the page scrolls it stays under the toolbar like the wide columns
+     (the sticky rule above). [data-height] outranks the column rules above. */
+  .mpv[data-height] .mpv-sidebar {
+    grid-column: 1;
+    z-index: 3;
+    justify-self: start;
+    width: min(85%, 320px);
+    height: 100%;
+    background: var(--mpv-color-bg, Canvas);
+    color: var(--mpv-color-text, CanvasText);
+    box-shadow: 4px 0 16px rgba(0, 0, 0, 0.15);
+    transform: translateX(-105%);
+    visibility: hidden;
+    transition: transform 0.2s, visibility 0.2s;
+  }
+
+  .mpv[data-height][data-sidebar-open] .mpv-sidebar {
+    transform: none;
+    visibility: inherit;
+  }
+
+  .mpv[data-sidebar-open] .mpv-backdrop {
+    display: block;
+    position: absolute;
+    z-index: 2;
+    inset: var(--_bar-h, 0px) 0 0 0;
+    background: rgba(0, 0, 0, 0.25);
+  }
+}
+
+/* ---- body ---- */
+
+/* Positioned descendants (even position:fixed) stay inside the body area and
+   are clipped there; wide content scrolls sideways (spec 5.8). */
+.mpv-content {
+  contain: layout paint;
+  overflow-x: auto;
+  overflow-wrap: break-word;
+  padding-top: calc(var(--_space) * 1.5);
+}
+
+.mpv-content > :first-child {
+  margin-top: 0;
+}
+
+.mpv-content h1,
+.mpv-content h2,
+.mpv-content h3,
+.mpv-content h4,
+.mpv-content h5,
+.mpv-content h6 {
+  line-height: 1.35;
+  margin: 1.6em 0 0.6em;
+  font-weight: 700;
+}
+
+.mpv-content h1 {
+  font-size: 1.85em;
+}
+
+.mpv-content h2 {
+  font-size: 1.45em;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid var(--_border);
+}
+
+.mpv-content h3 {
+  font-size: 1.2em;
+}
+
+.mpv-content h4 {
+  font-size: 1.05em;
+}
+
+.mpv-content p,
+.mpv-content ul,
+.mpv-content ol,
+.mpv-content blockquote,
+.mpv-content pre,
+.mpv-content table {
+  margin: 0 0 1em;
+}
+
+.mpv-content ul,
+.mpv-content ol {
+  padding-left: 1.6em;
+}
+
+.mpv-content li > ul,
+.mpv-content li > ol {
+  margin-bottom: 0;
+}
+
+.mpv-content li:has(> input[type='checkbox']) {
+  list-style: none;
+}
+
+.mpv-content li > input[type='checkbox'] {
+  margin: 0 0.4em 0 -1.4em;
+}
+
+.mpv-content a {
+  color: var(--_accent);
+}
+
+/* ---- child pages of a page with no body (spec 5.4) ---- */
+
+/* The page's name is in the toolbar; this h1 is for screen readers. */
+.mpv-content .mpv-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.mpv-content .mpv-children {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.mpv-content .mpv-child-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.mpv-content .mpv-child-title {
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.mpv-content .mpv-child-link:hover .mpv-child-title,
+.mpv-content .mpv-child-link:focus-visible .mpv-child-title {
+  color: var(--_accent);
+}
+
+.mpv-content .mpv-child-description {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  color: var(--_muted);
+  font-size: 0.875em;
+  line-height: 1.6;
+}
+
+.mpv-content .mpv-child-meta {
+  color: var(--_muted);
+  font-size: 0.8em;
+  white-space: nowrap;
+}
+
+/* As a table: one row per page, the columns shared by every row and the
+   heading row (subgrid), from edge to edge of the body column. */
+.mpv-content[data-index='list'] {
+  display: grid;
+  grid-template-columns: fit-content(18em) minmax(0, 1fr) max-content;
+  column-gap: calc(var(--_space) * 1.5);
+  margin: 0 calc(var(--_space) * -1.5);
+  padding-top: 0;
+}
+
+.mpv-content[data-index='list'] .mpv-children-head,
+.mpv-content[data-index='list'] .mpv-children,
+.mpv-content[data-index='list'] .mpv-child,
+.mpv-content[data-index='list'] .mpv-child-link {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
+}
+
+.mpv-content[data-index='list'] .mpv-children-head,
+.mpv-content[data-index='list'] .mpv-child-link {
+  padding: 0 calc(var(--_space) * 1.5);
+}
+
+.mpv-content .mpv-children-head > span {
+  font-size: 0.8em;
+}
+
+.mpv-content[data-index='list'] .mpv-child-link {
+  align-items: baseline;
+  padding-top: 0.85em;
+  padding-bottom: 0.85em;
+  border-bottom: 1px solid var(--_border);
+}
+
+.mpv-content[data-index='list'] .mpv-child-link:hover,
+.mpv-content[data-index='list'] .mpv-child-link:focus-visible {
+  background: var(--_tint);
+}
+
+.mpv-content[data-index='list'] .mpv-child-title {
+  grid-column: 1;
+}
+
+.mpv-content[data-index='list'] .mpv-child-description {
+  grid-column: 2;
+}
+
+.mpv-content[data-index='list'] .mpv-child-meta {
+  grid-column: 3;
+  text-align: right;
+}
+
+/* As cards. */
+.mpv-content[data-index='card'] .mpv-children-head {
+  display: none;
+}
+
+.mpv-content[data-index='card'] .mpv-children {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 16em), 1fr));
+  gap: calc(var(--_space) * 0.75);
+}
+
+.mpv-content[data-index='card'] .mpv-child {
+  display: flex;
+}
+
+.mpv-content[data-index='card'] .mpv-child-link {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5em;
+  padding: var(--_space) calc(var(--_space) * 1.1);
+  border: 1px solid var(--_border);
+  border-radius: 12px;
+  transition: border-color 0.15s, background-color 0.15s;
+}
+
+.mpv-content[data-index='card'] .mpv-child-link:hover,
+.mpv-content[data-index='card'] .mpv-child-link:focus-visible {
+  border-color: var(--_accent);
+  background: var(--_tint);
+}
+
+.mpv-content[data-index='card'] .mpv-child-title {
+  font-size: 1.05em;
+}
+
+.mpv-content[data-index='card'] .mpv-child-description {
+  -webkit-line-clamp: 3;
+}
+
+.mpv-content[data-index='card'] .mpv-child-meta {
+  margin-top: auto;
+}
+
+.mpv-content[data-index='card'] .mpv-child-meta:empty {
+  display: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mpv-content[data-index='card'] .mpv-child-link {
+    transition: none;
+  }
+}
+
+/* Narrow: the table keeps the name and the count on one line and puts the
+   description under them; the heading row is left out. */
+@container (max-width: 767.98px) {
+  .mpv-content[data-index='list'] {
+    grid-template-columns: minmax(0, 1fr) max-content;
+    column-gap: var(--_space);
+    margin: 0 calc(var(--_space) * -1);
+  }
+
+  .mpv-content[data-index='list'] .mpv-children-head {
+    display: none;
+  }
+
+  .mpv-content[data-index='list'] .mpv-child-link {
+    padding-left: var(--_space);
+    padding-right: var(--_space);
+  }
+
+  .mpv-content[data-index='list'] .mpv-child-meta {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .mpv-content[data-index='list'] .mpv-child-description {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    margin-top: 0.2em;
+  }
+}
+
+/* ---- previous / next at the end of a page (spec 5.4) ---- */
+
+.mpv-pager {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: calc(var(--_space) * 0.75);
+  margin-top: calc(var(--_space) * 2.5);
+  padding-top: calc(var(--_space) * 1.5);
+  border-top: 1px solid var(--_border);
+}
+
+.mpv-pager-link {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15em;
+  padding: 0.7em 1em;
+  border: 1px solid var(--_border);
+  border-radius: 10px;
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.15s;
+}
+
+.mpv-pager-next {
+  grid-column: 2;
+  text-align: right;
+}
+
+.mpv-pager-link:hover,
+.mpv-pager-link:focus-visible {
+  border-color: var(--_accent);
+}
+
+.mpv-pager-label {
+  color: var(--_muted);
+  font-size: 0.8em;
+}
+
+.mpv-pager-title {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.mpv-pager-link:hover .mpv-pager-title,
+.mpv-pager-link:focus-visible .mpv-pager-title {
+  color: var(--_accent);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mpv-pager-link {
+    transition: none;
+  }
+}
+
+.mpv-content img {
+  max-width: 100%;
+  height: auto;
+}
+
+.mpv-content blockquote {
+  padding: 0.2em 1em;
+  border-left: 4px solid var(--_border);
+  color: var(--_muted);
+}
+
+.mpv-content code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.875em;
+  background: var(--_tint);
+  border-radius: 4px;
+  padding: 0.15em 0.35em;
+}
+
+.mpv-content pre {
+  background: var(--_tint);
+  border-radius: 6px;
+  padding: 0.9em 1em;
+  overflow-x: auto;
+  line-height: 1.5;
+}
+
+.mpv-content pre code {
+  background: none;
+  padding: 0;
+  font-size: 0.85em;
+}
+
+.mpv-content table {
+  border-collapse: collapse;
+}
+
+.mpv-content th,
+.mpv-content td {
+  border: 1px solid var(--_border);
+  padding: 0.4em 0.75em;
+  text-align: left;
+}
+
+.mpv-content th {
+  background: var(--_tint);
+}
+
+.mpv-content hr {
+  border: 0;
+  border-top: 1px solid var(--_border);
+  margin: 2em 0;
+}

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8" />
+    <title>ES module loaded late</title>
+  </head>
+  <body>
+    <md-pages-viewer id="by-tag" current-id="start"></md-pages-viewer>
+    <div id="by-js-slot"></div>
+    <script>
+      // Runs before the module script at the end is evaluated, so
+      // <md-pages-viewer> is not defined yet when these properties are set.
+      (() => {
+        const state = (window.__beforeDefine = {
+          definedWhenSet: !!customElements.get('md-pages-viewer'),
+          fetched: [],
+        });
+
+        const tag = document.getElementById('by-tag');
+        tag.fetch = (input, init) => {
+          state.fetched.push(String(input));
+          return window.fetch(input, init);
+        };
+        tag.pages = 'pages.json'; // after fetch (spec 5.6)
+        tag.currentId = 'images'; // set after the attribute current-id="start"
+        tag.imageResolver = (path) => '/test/fixtures/embed-dist/assets2/' + path;
+        tag.urlParam = 'doc';
+
+        const created = document.createElement('md-pages-viewer');
+        created.id = 'by-js';
+        created.pages = [
+          { id: 'a', parentId: null, title: 'ページA', order: 1, md: '# ページA' },
+          { id: 'b', parentId: null, title: 'ページB', order: 2, md: '# ページB\n\n## 見出しB\n\n本文' },
+        ];
+        created.currentId = 'b';
+        created.urlParam = false;
+        document.getElementById('by-js-slot').append(created);
+      })();
+    </script>
+    <script type="module" src="/dist/md-pages-viewer.mjs"></script>
+  </body>
+</html>

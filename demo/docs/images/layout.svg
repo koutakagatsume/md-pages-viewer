@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="480" height="240" viewBox="0 0 480 240" font-family="sans-serif" font-size="13">
+  <rect x="0.5" y="0.5" width="479" height="239" rx="8" fill="#fff" stroke="#d0d7de"/>
+  <rect x="12" y="12" width="456" height="28" rx="6" fill="#f6f8fa" stroke="#d0d7de"/>
+  <text x="240" y="31" text-anchor="middle" fill="#57606a">ツールバー（今の場所・検索欄）</text>
+  <rect x="12" y="48" width="110" height="180" rx="6" fill="#eef2ff" stroke="#c7d2fe"/>
+  <text x="67" y="142" text-anchor="middle" fill="#3730a3">サイドバー</text>
+  <rect x="134" y="48" width="230" height="146" rx="6" fill="#fff" stroke="#d0d7de"/>
+  <text x="249" y="125" text-anchor="middle" fill="#1f2328">本文</text>
+  <rect x="134" y="202" width="230" height="26" rx="6" fill="#fff" stroke="#d0d7de"/>
+  <text x="249" y="220" text-anchor="middle" fill="#57606a">前後のページ</text>
+  <rect x="376" y="48" width="92" height="180" rx="6" fill="#ecfdf5" stroke="#a7f3d0"/>
+  <text x="422" y="142" text-anchor="middle" fill="#065f46">目次</text>
+</svg>

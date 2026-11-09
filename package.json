@@ -1,0 +1,48 @@
+{
+  "name": "md-pages-viewer",
+  "version": "1.0.0",
+  "description": "A Web Component that renders hierarchical Markdown pages with breadcrumbs, a sidebar tree and a table of contents.",
+  "keywords": [
+    "markdown",
+    "viewer",
+    "web-component",
+    "custom-element",
+    "documentation",
+    "manual",
+    "sidebar",
+    "breadcrumb",
+    "toc"
+  ],
+  "license": "MIT",
+  "author": "Kota Kagatsume",
+  "type": "module",
+  "main": "./dist/md-pages-viewer.mjs",
+  "module": "./dist/md-pages-viewer.mjs",
+  "exports": {
+    ".": {
+      "import": "./dist/md-pages-viewer.mjs",
+      "default": "./dist/md-pages-viewer.mjs"
+    }
+  },
+  "unpkg": "./dist/md-pages-viewer.js",
+  "jsdelivr": "./dist/md-pages-viewer.js",
+  "files": [
+    "dist",
+    "LICENSE"
+  ],
+  "sideEffects": true,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "prepack": "npm run build",
+    "serve": "node scripts/serve.mjs",
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:unit": "node --test \"test/unit/*.test.mjs\"",
+    "test:e2e": "playwright test"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "dompurify": "3.4.17",
+    "esbuild": "0.28.2",
+    "marked": "18.1.2"
+  }
+}

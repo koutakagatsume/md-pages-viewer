@@ -1,0 +1,5 @@
+[
+  { "id": "start", "parentId": null, "title": "はじめに", "order": 1, "src": "docs/start.md" },
+  { "id": "images", "parentId": "start", "title": "画像のページ", "order": 1, "md": "# 画像のページ\n\n![図](pic.svg)\n\n## 図の説明\n\n本文" },
+  { "id": "faq", "parentId": null, "title": "FAQ", "order": 2, "src": "docs/faq.md" }
+]

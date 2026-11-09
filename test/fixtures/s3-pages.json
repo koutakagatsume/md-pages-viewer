@@ -1,0 +1,4 @@
+[
+  { "id": "guide", "parentId": null, "title": "ガイド", "order": 1, "src": "manual/guide.md" },
+  { "id": "faq", "parentId": null, "title": "FAQ", "order": 2, "src": "manual/faq.md" }
+]
