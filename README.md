@@ -1,6 +1,13 @@
 # md-pages-viewer
 
-階層のある Markdown 文書をブラウザで表示するライブラリです。`<script>` を1行読み込むだけで、サーバー側の言語を問わず組み込めます。
+[![npm](https://img.shields.io/npm/v/md-pages-viewer)](https://www.npmjs.com/package/md-pages-viewer)
+[![license](https://img.shields.io/npm/l/md-pages-viewer)](https://github.com/koutakagatsume/md-pages-viewer/blob/main/LICENSE)
+
+階層のある Markdown 文書をブラウザで表示するライブラリです。`<script>` を1行読み込むだけで、サーバー側の言語を問わず組み込めます。業務アプリや管理画面の中に、操作マニュアルやヘルプを置く使い方を想定しています。
+
+**デモ：<https://koutakagatsume.github.io/md-pages-viewer/>**（架空の店舗管理アプリに組み込んだ例）
+
+![管理画面の1ページにマニュアルを置いた例](https://raw.githubusercontent.com/koutakagatsume/md-pages-viewer/main/docs/images/embed-page.png)
 
 - ページのデータから、上のツールバー（今の場所・検索欄）・サイドバー・ページ内目次・前後のページへのリンクを自動で作ります
 - 本文は Markdown 文字列でも、md ファイルの URL（S3、サーバーのストレージ）でも渡せます
@@ -8,6 +15,25 @@
 - 表示する HTML はすべて DOMPurify でサニタイズします
 
 データの保存やページ一覧を返す API は、利用側で用意します。下の[ページのデータ](#ページのデータ)の形で返せば、DB の種類やテーブル構造は問いません。
+
+## どんなときに使うか
+
+- 業務アプリや管理画面に、操作マニュアルやヘルプを組み込みたいとき
+- マニュアルの本文を DB や S3 に置き、アプリを再デプロイせずに書き換えたいとき
+- 開いている画面の説明を、その画面からすぐ開きたいとき（`currentId` で開くページを指定します）
+
+VitePress や Docusaurus のような静的サイトジェネレーターは、Markdown からマニュアル用の別のサイトを作ります。md-pages-viewer は、今あるアプリの画面の中に置き、ページのデータを実行時に受け取って表示します。
+
+![画面の右にヘルプパネルとして置いた例](https://raw.githubusercontent.com/koutakagatsume/md-pages-viewer/main/docs/images/embed-panel.png)
+
+## デモ
+
+| デモ | 内容 |
+| --- | --- |
+| [埋め込みの例](https://koutakagatsume.github.io/md-pages-viewer/demo/embed.html) | 架空の店舗管理アプリの、管理画面の1ページに置いた例と、画面の右のヘルプパネルに置いた例。テーマ（ライト・ダーク）と高さの指定を切り替えられます |
+| [タグで置いた例](https://koutakagatsume.github.io/md-pages-viewer/demo/index.html) | このライブラリの説明を表示します。ページの一覧を JSON の URL で渡し、本文の多くは md ファイルの URL で渡しています |
+| [`new MdPagesViewer()` の例](https://koutakagatsume.github.io/md-pages-viewer/demo/new.html) | 高さを指定した枠に入れた例。サイドバー・本文・目次がそれぞれの中でスクロールします |
+| [CDN から読み込む例](https://koutakagatsume.github.io/md-pages-viewer/demo/cdn.html) | 1つの HTML ファイルで完結する例。ダウンロードして、そのまま開いても動きます |
 
 ## 読み込み
 
@@ -17,7 +43,7 @@ CDN から読み込みます。
 <script src="https://cdn.jsdelivr.net/npm/md-pages-viewer@1/dist/md-pages-viewer.js"></script>
 ```
 
-外部の CDN に接続できない環境では、`md-pages-viewer.js` を自分のサーバーに置いて読み込みます。CSS はこのファイルに含まれているので、`<link>` は要りません。
+外部の CDN に接続できない環境では、`md-pages-viewer.js` を自分のサーバーに置いて読み込みます。CSS はこのファイルに含まれているので、`<link>` は要りません。ファイルの大きさは約137KB（gzip で約45KB）で、Markdown の変換（marked）とサニタイズ（DOMPurify）を含みます。
 
 ビルドするプロジェクトでは npm からインストールします。
 
