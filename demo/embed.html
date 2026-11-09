@@ -295,32 +295,41 @@
         background: #374151;
       }
 
-      /* 例2：画面の右に重ねるヘルプパネル。ヘッダーの下に出し、開閉は同じボタンで行う */
+      /* 例2：画面の右に重ねるヘルプパネル。ヘッダーの下に出し、開閉は同じボタンで行う。
+         開くときは右端から幅を広げ、閉じるときは右端へ幅を縮める。中のマニュアルは動かさずに
+         見える幅だけを変えるので、画面の外から滑り込んでくるようには見えない */
       .help-panel {
+        --help-width: min(480px, 100vw);
         position: fixed;
         right: 0;
         bottom: 0;
-        width: min(480px, 100%);
+        width: 0;
         display: flex;
-        flex-direction: column;
+        justify-content: flex-end;
+        overflow: hidden;
         border-left: 1px solid var(--app-border);
         background: var(--app-surface);
         box-shadow: -8px 0 24px rgba(0, 0, 0, 0.12);
-        transform: translateX(100%);
         visibility: hidden;
         transition:
-          transform 0.2s ease,
+          width 0.2s ease,
           visibility 0s linear 0.2s;
         z-index: 10;
       }
       .help-panel.open {
-        transform: none;
+        width: var(--help-width);
         visibility: visible;
-        transition: transform 0.2s ease;
+        transition: width 0.2s ease;
       }
       .help-panel md-pages-viewer {
-        flex: 1;
-        min-height: 0;
+        flex: none;
+        width: calc(var(--help-width) - 1px);
+      }
+      @media (prefers-reduced-motion: reduce) {
+        .help-panel,
+        .help-panel.open {
+          transition: none;
+        }
       }
 
       @media (max-width: 900px) {
