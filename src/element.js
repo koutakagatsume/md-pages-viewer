@@ -26,6 +26,7 @@ const TEXT = {
   search: '検索',
   searchLabel: 'ページを検索',
   noResults: (query) => `「${query}」に一致するページはありません`,
+  searching: '検索しています…',
   sidebarClose: 'ページ一覧を閉じる',
   sidebarOpen: 'ページ一覧を開く',
   tocClose: '目次を閉じる',
@@ -41,6 +42,14 @@ const TEXT = {
 
 /** At most this many search results are listed (spec 5.4). */
 const SEARCH_RESULTS_SHOWN = 50;
+// Page bodies are read for the search a little at a time, so a long list
+// never holds up the screen (spec 5.4): this long per turn of the event loop,
+const SEARCH_READ_SLICE_MS = 12;
+// this long more when a word is typed (a short list is done at once and
+// shows its full results without the "searching" note),
+const SEARCH_READ_ON_INPUT_MS = 50;
+// and the results found so far are shown again at most this often.
+const SEARCH_REFRESH_MS = 250;
 
 /** Creates an element. `hidden: true` sets the attribute; other props are attributes as given. */
 function h(tag, props, ...children) {
@@ -147,7 +156,7 @@ function foldForSearch(original) {
   const from = [];
   let index = 0;
   for (const char of original) {
-    const folded = char.normalize('NFKC').toLowerCase();
+    const folded = foldChar(char);
     text += folded;
     for (let k = 0; k < folded.length; k++) from.push(index);
     index += char.length;
@@ -156,10 +165,34 @@ function foldForSearch(original) {
   return { text, from };
 }
 
+// Each character folded once: a list of many pages holds few distinct characters.
+const foldedChars = new Map();
+function foldChar(char) {
+  let folded = foldedChars.get(char);
+  if (folded === undefined) {
+    folded = char.normalize('NFKC').toLowerCase();
+    foldedChars.set(char, folded);
+  }
+  return folded;
+}
+
+/** The folded text alone (the same as foldForSearch(original).text). */
+function foldText(original) {
+  let text = '';
+  for (const char of original) text += foldChar(char);
+  return text;
+}
+
 /** The search words: folded, split on spaces. */
 function searchWords(query) {
-  return foldForSearch(query).text.split(/\s+/).filter(Boolean);
+  return foldText(query).split(/\s+/).filter(Boolean);
 }
+
+/** Whether folded text contains every word. */
+const hasAll = (folded, words) => words.every((word) => folded.includes(word));
+
+/** Which page and heading a search result opens; the same result has the same key when the results are made again. */
+const searchResultKey = (link) => `${link.dataset.mpvNav}#${link.dataset.mpvNavHash ?? ''}`;
 
 /** Ranges [start, end) in `original` where any of `words` occurs, merged. */
 function matchRanges(original, words) {
@@ -178,12 +211,6 @@ function matchRanges(original, words) {
     else merged.push([...range]);
   }
   return merged;
-}
-
-/** Whether `original` contains every word. */
-function containsAll(original, words) {
-  const { text } = foldForSearch(original);
-  return words.every((word) => text.includes(word));
 }
 
 /** `original` (or the part [start, end)) as text nodes with the matches in <mark part="search-mark">. */
@@ -285,6 +312,10 @@ export class MdPagesViewerElement extends HTMLElement {
   #searchQuery = ''; // what the search box holds
   #searchModel = null; // the list the shown results were made from
   #searchSelected = 0; // the result Enter opens (moved with the arrow keys)
+  #searchTexts = new WeakMap(); // page -> its folded text for matching (see #searchTextOf)
+  // Reading the page bodies of a list for the search, a little at a time:
+  // {model, order: page ids in sidebar order, next: index of the next to read, timer, shownAt}.
+  #searchPrep = null;
   #childView = 'list'; // how a child index is shown: 'list' (a table) or 'card'
   #showingChildIndex = false;
   #bodyRequests = new Map(); // id -> {generation, src, promise} while a body is being fetched
@@ -306,6 +337,9 @@ export class MdPagesViewerElement extends HTMLElement {
   };
   /** @type {{id: string, level: string, text: string, heading?: Element, group: number, links: Element[], items: Element[]}[]} */
   #tocItems = [];
+  // The heading last scrolled to by a link, the table of contents or a search
+  // result: marked even when the body cannot scroll it up to the line.
+  #tocTaken = null;
   #spyFrame = 0;
   // Scroll events do not cross shadow boundaries, so both our own shadow
   // root (the body column) and the document (the window and host elements)
@@ -400,8 +434,10 @@ export class MdPagesViewerElement extends HTMLElement {
     root.addEventListener('click', (event) => this.#handleClick(event));
     this.#ui.search.addEventListener('focus', () => {
       if (this.#searchQuery !== '') this.#ui.searchResults.hidden = false;
+      // Someone is about to search: start reading the page bodies now.
+      this.#prepareSearch();
     });
-    this.#ui.search.addEventListener('input', () => this.#runSearch());
+    this.#ui.search.addEventListener('input', () => this.#runSearch({ readMs: SEARCH_READ_ON_INPUT_MS }));
     this.#ui.search.addEventListener('keydown', (event) => this.#onSearchKey(event));
     // In quirks mode the probe's height:100% resolves against the viewport
     // and would push the host's layout; another check is used there.
@@ -486,6 +522,8 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#updateHeightMode();
     this.#updateFollow();
     if (this.#pending.size > 0 || !this.#initialized) this.#schedule();
+    // Reading for the search goes on where it stopped.
+    if (this.#searchPrep) this.#prepareSearch();
   }
 
   disconnectedCallback() {
@@ -497,6 +535,10 @@ export class MdPagesViewerElement extends HTMLElement {
     document.removeEventListener('scroll', this.#onSpyScroll, { capture: true });
     if (this.#spyFrame) cancelAnimationFrame(this.#spyFrame);
     this.#spyFrame = 0;
+    if (this.#searchPrep && this.#searchPrep.timer) {
+      clearTimeout(this.#searchPrep.timer);
+      this.#searchPrep.timer = 0;
+    }
     this.#resizeObserver.disconnect();
     this.#stopFollowing();
     // A list that arrives after removal must not touch the host's URL or
@@ -950,7 +992,7 @@ export class MdPagesViewerElement extends HTMLElement {
     );
     this.#markChildIndex(true);
     this.#putBody(fragment, how);
-    this.#renderPager(null);
+    this.#renderPager(page);
   }
 
   /** Whether the body is a child index; the body gets data-index="list" or "card" for the CSS. */
@@ -975,7 +1017,8 @@ export class MdPagesViewerElement extends HTMLElement {
 
   /**
    * "Previous" and "next" at the end of a page's body, in the order of the
-   * sidebar (spec 5.4). `page` null hides them (child index, messages).
+   * sidebar (spec 5.4), under a body or a child index. `page` null hides
+   * them (loading, errors, "not found").
    */
   #renderPager(page) {
     const pager = this.#ui.pager;
@@ -1074,18 +1117,18 @@ export class MdPagesViewerElement extends HTMLElement {
       case 'initial': {
         if (!name || !hasBody) return;
         const target = this.#findInBody(decodeFragment(location.hash.slice(1)), { headingsOnly: true });
-        if (target) target.scrollIntoView({ block: 'start' });
+        if (target) this.#scrollToTarget(target);
         return;
       }
       case 'switch': {
         const target = how.hash ? this.#findInBody(how.hash) : null;
-        if (target) target.scrollIntoView({ block: 'start' });
+        if (target) this.#scrollToTarget(target);
         else this.#scrollToTop();
         return;
       }
       case 'popstate': {
         const target = this.#findInBody(decodeFragment(location.hash.slice(1)), { headingsOnly: true });
-        if (target) target.scrollIntoView({ block: 'start' });
+        if (target) this.#scrollToTarget(target);
         else this.#scrollToTop();
         return;
       }
@@ -1099,6 +1142,12 @@ export class MdPagesViewerElement extends HTMLElement {
     const selector = headingsOnly ? 'h1[id], h2[id], h3[id], h4[id], h5[id], h6[id]' : '[id]';
     for (const el of this.#ui.content.querySelectorAll(selector)) if (el.id === id) return el;
     return null;
+  }
+
+  /** Brings an element of the body to the top of the view, and marks it in the table of contents if it is listed there. */
+  #scrollToTarget(target) {
+    this.#tocTaken = target;
+    target.scrollIntoView({ block: 'start' });
   }
 
   #scrollToTop() {
@@ -1209,7 +1258,7 @@ export class MdPagesViewerElement extends HTMLElement {
   #goToHash(hash) {
     const target = this.#findInBody(hash);
     if (!target) return;
-    target.scrollIntoView({ block: 'start' });
+    this.#scrollToTarget(target);
     this.#updateTocCurrent();
     if (this.#paramName()) {
       const url = new URL(location.href);
@@ -1256,10 +1305,11 @@ export class MdPagesViewerElement extends HTMLElement {
     const toggle = target.closest('.mpv-toggle');
     if (toggle && this.#ui.tree.contains(toggle)) {
       const id = toggle.dataset.mpvToggle;
-      if (this.#expanded.has(id)) this.#expanded.delete(id);
-      else this.#expanded.add(id);
-      const shown = this.#displayed;
-      this.#renderSidebar(shown && shown.kind === 'page' ? shown.id : null, { keepExpanded: true });
+      const open = !this.#expanded.has(id);
+      if (open) this.#expanded.add(id);
+      else this.#expanded.delete(id);
+      toggle.setAttribute('aria-expanded', String(open));
+      this.#slideBranch(toggle.closest('li').querySelector(':scope > ul'), open);
       return;
     }
     // The same button opens and closes its column (spec 6): wide, the
@@ -1368,11 +1418,19 @@ export class MdPagesViewerElement extends HTMLElement {
    * Searches page titles, descriptions, headings and body text, and lists
    * the matches under the search box in the toolbar. Bodies given as `src`
    * are not fetched for this; only their titles and descriptions count.
-   * `show` is false when the results are only made again (a new list).
+   * Titles and descriptions of all pages count at once; headings and body
+   * text count once that page has been read (#prepareSearch). Until all are
+   * read, the results so far are shown with a "searching" note.
+   * `show` is false when the results are only made again (a new list, more
+   * pages read). `readMs`: how long to read page bodies first, if any are left.
    */
-  #runSearch({ show = true } = {}) {
+  #runSearch({ show = true, readMs = 0 } = {}) {
     const query = this.#ui.search.value.trim();
-    if (query !== this.#searchQuery) this.#searchSelected = 0;
+    const sameQuery = query === this.#searchQuery;
+    // The result that was selected, so it stays selected when the results are made again.
+    const selectedLink = sameQuery ? this.#searchLinks()[this.#searchSelected] : undefined;
+    const selectedKey = selectedLink ? searchResultKey(selectedLink) : null;
+    if (!sameQuery) this.#searchSelected = 0;
     this.#searchQuery = query;
     this.#searchModel = this.#model;
     const results = this.#ui.searchResults;
@@ -1382,19 +1440,26 @@ export class MdPagesViewerElement extends HTMLElement {
       results.replaceChildren();
       return;
     }
+    this.#prepareSearch();
+    if (readMs > 0) this.#readForSearch(readMs);
+    const reading = this.#searchReading();
     const model = this.#model;
     const found = [];
     const visit = (ids) => {
       for (const id of ids) {
         const page = model.get(id);
-        if (containsAll(`${page.title} ${page.description ?? ''}`, words)) {
-          found.push({ rank: 0, page, hash: '', heading: null, text: page.description && containsAll(page.description, words) ? page.description : null });
+        const text = this.#searchTextOf(page);
+        if (hasAll(text.head, words)) {
+          found.push({ rank: 0, page, hash: '', heading: null, text: page.description && hasAll(text.description, words) ? page.description : null });
         }
-        const outline = this.#outlineOf(page);
-        if (outline.lead && containsAll(outline.lead, words)) found.push({ rank: 2, page, hash: '', heading: null, text: outline.lead });
-        for (const section of outline.sections) {
-          if (containsAll(section.heading, words)) found.push({ rank: 1, page, hash: section.id, heading: section.heading, text: null });
-          else if (section.text && containsAll(`${section.heading} ${section.text}`, words)) found.push({ rank: 2, page, hash: section.id, heading: section.heading, text: section.text });
+        if (text.body) {
+          const outline = this.#outlineOf(page);
+          if (outline.lead && hasAll(text.body.lead, words)) found.push({ rank: 2, page, hash: '', heading: null, text: outline.lead });
+          outline.sections.forEach((section, index) => {
+            const folded = text.body.sections[index];
+            if (hasAll(folded.heading, words)) found.push({ rank: 1, page, hash: section.id, heading: section.heading, text: null });
+            else if (section.text && hasAll(folded.all, words)) found.push({ rank: 2, page, hash: section.id, heading: section.heading, text: section.text });
+          });
         }
         visit(model.childrenOf(id));
       }
@@ -1403,8 +1468,10 @@ export class MdPagesViewerElement extends HTMLElement {
     found.sort((a, b) => a.rank - b.rank);
 
     const name = this.#linkParamName();
+    const note = (text) => h('p', { class: 'mpv-search-empty', part: 'search-empty' }, text);
     if (found.length === 0) {
-      results.replaceChildren(h('p', { class: 'mpv-search-empty', part: 'search-empty' }, TEXT.noResults(query)));
+      // No "no match" before every page has been read.
+      results.replaceChildren(note(reading ? TEXT.searching : TEXT.noResults(query)));
     } else {
       results.replaceChildren(
         h(
@@ -1422,10 +1489,88 @@ export class MdPagesViewerElement extends HTMLElement {
           }),
         ),
       );
+      if (reading) results.append(note(TEXT.searching));
     }
+    if (selectedKey !== null) {
+      const index = this.#searchLinks().findIndex((link) => searchResultKey(link) === selectedKey);
+      if (index !== -1) this.#searchSelected = index;
+    }
+    if (this.#searchPrep) this.#searchPrep.shownAt = performance.now();
     this.#markSearchSelected();
     if (show) results.hidden = false;
   }
+
+  /**
+   * The folded text a page is matched against: its title and description
+   * at once, and its headings and body text once read (`read` reads them
+   * now; a page without `md` has none). Kept per page; a new list has new
+   * page objects.
+   * @returns {{head: string, description: string, body: null | {lead: string, sections: {heading: string, all: string}[]}}}
+   */
+  #searchTextOf(page, read = false) {
+    let text = this.#searchTexts.get(page);
+    if (!text) {
+      text = { head: foldText(`${page.title} ${page.description ?? ''}`), description: page.description ? foldText(page.description) : '', body: null };
+      this.#searchTexts.set(page, text);
+    }
+    if (text.body === null && (read || page.md === null)) {
+      const outline = this.#outlineOf(page);
+      text.body = {
+        lead: foldText(outline.lead),
+        sections: outline.sections.map((section) => ({ heading: foldText(section.heading), all: section.text ? foldText(`${section.heading} ${section.text}`) : '' })),
+      };
+    }
+    return text;
+  }
+
+  /**
+   * Starts reading the page bodies of the current list for the search, or
+   * goes on with it: a little at a time in sidebar order, so the screen is
+   * never held up (spec 5.4). A new list starts over.
+   */
+  #prepareSearch() {
+    const model = this.#model;
+    if (!model) return;
+    let prep = this.#searchPrep;
+    if (!prep || prep.model !== model) {
+      if (prep) clearTimeout(prep.timer);
+      prep = { model, order: this.#pageOrder(), next: 0, timer: 0, shownAt: 0 };
+      this.#searchPrep = prep;
+    }
+    if (prep.next < prep.order.length && !prep.timer && this.isConnected) prep.timer = setTimeout(this.#onSearchReadSlice, 0);
+  }
+
+  /** Whether page bodies of the current list are still to be read for the search. */
+  #searchReading() {
+    const prep = this.#searchPrep;
+    return prep !== null && prep.model === this.#model && prep.next < prep.order.length;
+  }
+
+  /** Reads page bodies for the search for about `ms` milliseconds. */
+  #readForSearch(ms) {
+    if (!this.#searchReading()) return;
+    const prep = this.#searchPrep;
+    const until = performance.now() + ms;
+    do {
+      const page = prep.model.get(prep.order[prep.next]);
+      prep.next += 1;
+      if (page) this.#searchTextOf(page, true);
+    } while (prep.next < prep.order.length && performance.now() < until);
+  }
+
+  #onSearchReadSlice = () => {
+    const prep = this.#searchPrep;
+    if (!prep) return;
+    prep.timer = 0;
+    if (prep.model !== this.#model || !this.isConnected || !this.#searchReading()) return;
+    this.#readForSearch(SEARCH_READ_SLICE_MS);
+    const done = !this.#searchReading();
+    if (!done) prep.timer = setTimeout(this.#onSearchReadSlice, 0);
+    // The results so far are shown now and then, and in full at the end.
+    if (this.#searchQuery !== '' && this.#searchModel === prep.model && (done || performance.now() - prep.shownAt >= SEARCH_REFRESH_MS)) {
+      this.#runSearch({ show: !this.#ui.searchResults.hidden });
+    }
+  };
 
   #searchLinks() {
     return [...this.#ui.searchResults.querySelectorAll('.mpv-search-result')];
@@ -1558,6 +1703,30 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#placeSideColumns();
   }
 
+  /**
+   * Opens or closes the child pages under a page of the sidebar where they
+   * are, sliding their height over 0.2s (at once with prefers-reduced-motion).
+   * Another click while it moves turns it around from where it is.
+   */
+  #slideBranch(list, open) {
+    const from = list.hidden ? 0 : list.getBoundingClientRect().height;
+    for (const animation of list.getAnimations()) animation.cancel();
+    list.hidden = false;
+    // While closing, its links can no longer be focused or clicked.
+    list.inert = !open;
+    const to = open ? list.getBoundingClientRect().height : 0;
+    const done = () => {
+      list.hidden = !open;
+      list.inert = false;
+      this.#placeSideColumns();
+    };
+    if (from === to || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      done();
+      return;
+    }
+    list.animate({ height: [`${from}px`, `${to}px`], overflow: ['hidden', 'hidden'] }, { duration: 200, easing: 'ease' }).onfinish = done;
+  }
+
   #renderBreadcrumb(currentId) {
     const nav = this.#ui.breadcrumb;
     const list = nav.querySelector('ol');
@@ -1597,6 +1766,7 @@ export class MdPagesViewerElement extends HTMLElement {
    */
   #setToc(entries) {
     const empty = entries.length === 0;
+    this.#tocTaken = null;
     this.#ui.toc.hidden = empty;
     this.#ui.tocMobile.hidden = empty;
     this.#ui.tocMobile.open = false;
@@ -1645,7 +1815,15 @@ export class MdPagesViewerElement extends HTMLElement {
     items.forEach((item, index) => {
       if (item.heading && item.heading.getBoundingClientRect().top <= line) current = index;
     });
-    if (view.atEnd) {
+    // A heading taken by a link that the body cannot scroll up to the line
+    // (a short page, or one of the last headings) is still the one marked,
+    // while it is in view and the body cannot scroll down any further.
+    // Reading past it lets it go.
+    const taken = this.#tocTaken ? items.findIndex((item) => item.heading === this.#tocTaken) : -1;
+    if (taken >= 0 && current > taken) this.#tocTaken = null;
+    if (taken > current && view.noFurther && items[taken].heading.getBoundingClientRect().top < view.bottom) {
+      current = taken;
+    } else if (view.atEnd) {
       for (let index = items.length - 1; index > current; index--) {
         if (items[index].heading && items[index].heading.getBoundingClientRect().top < view.bottom) {
           current = index;
@@ -1666,23 +1844,30 @@ export class MdPagesViewerElement extends HTMLElement {
     });
   }
 
-  /** The visible part of whatever the body scrolls in (spec 5.5), and whether it is scrolled to the end. */
+  /**
+   * The visible part of whatever the body scrolls in (spec 5.5). noFurther:
+   * it cannot scroll down any more (also when it does not scroll at all);
+   * atEnd: it has been scrolled down to the end.
+   */
   #readingView() {
-    const end = (scrolled, top, height, total) => scrolled > 0 && top + height >= total - 2;
+    const ends = (scrolled, height, total) => {
+      const noFurther = scrolled + height >= total - 2;
+      return { noFurther, atEnd: scrolled > 0 && noFurther };
+    };
     if (this.#ui.frame.dataset.height === 'fixed') {
       const main = this.#ui.main;
       const box = main.getBoundingClientRect();
-      return { top: box.top, bottom: box.bottom, atEnd: end(main.scrollTop, main.scrollTop, main.clientHeight, main.scrollHeight) };
+      return { top: box.top, bottom: box.bottom, ...ends(main.scrollTop, main.clientHeight, main.scrollHeight) };
     }
     // The toolbar stays over the top of the view (spec 6): the body is read below it.
     const below = (top) => Math.max(top, this.#ui.toolbar.getBoundingClientRect().bottom);
     const base = scrollBase(this);
     if (base) {
       const box = base.getBoundingClientRect();
-      return { top: below(box.top + base.clientTop), bottom: box.top + base.clientTop + base.clientHeight, atEnd: end(base.scrollTop, base.scrollTop, base.clientHeight, base.scrollHeight) };
+      return { top: below(box.top + base.clientTop), bottom: box.top + base.clientTop + base.clientHeight, ...ends(base.scrollTop, base.clientHeight, base.scrollHeight) };
     }
     const root = document.scrollingElement || document.documentElement;
-    return { top: below(0), bottom: window.innerHeight, atEnd: end(window.scrollY, window.scrollY, window.innerHeight, root.scrollHeight) };
+    return { top: below(0), bottom: window.innerHeight, ...ends(window.scrollY, window.innerHeight, root.scrollHeight) };
   }
 }
 

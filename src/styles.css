@@ -542,15 +542,47 @@
 }
 
 /* Closed columns (spec 6): the wide layout only; narrow keeps its drawer
-   and folded table of contents. */
+   and folded table of contents. A column closes by narrowing to nothing and
+   opens by widening, so the body widens and narrows with it. Its content
+   keeps its own width meanwhile (cut off, not wrapped). It is hidden only
+   once closed, and shown at once when it starts to open. */
 @container (min-width: 768px) {
+  .mpv-sidebar,
+  .mpv-toc {
+    overflow-x: hidden;
+    transition:
+      width 0.2s ease,
+      border-color 0.2s ease,
+      visibility 0s;
+  }
+
+  .mpv-sidebar > * {
+    box-sizing: border-box;
+    width: var(--mpv-sidebar-width, 260px);
+  }
+
+  .mpv-toc > * {
+    box-sizing: border-box;
+    width: 220px;
+  }
+
+  .mpv-main {
+    transition: border-color 0.2s ease;
+  }
+
   .mpv[data-sidebar-closed] .mpv-sidebar,
   .mpv[data-toc-closed] .mpv-toc {
-    display: none;
+    width: 0;
+    border-color: transparent;
+    visibility: hidden;
+    transition:
+      width 0.2s ease,
+      border-color 0.2s ease,
+      visibility 0s 0.2s;
   }
 
   .mpv[data-sidebar-closed] .mpv-main {
-    border-left: 0;
+    border-left-color: transparent;
   }
 }
 
@@ -606,7 +638,11 @@
   /* The sidebar opens over the body, in the same cell, under the toolbar, so
      its button stays in place. It fills the cell, but no more than the view:
      while the page scrolls it stays under the toolbar like the wide columns
-     (the sticky rule above). [data-height] outranks the column rules above. */
+     (the sticky rule above). [data-height] outranks the column rules above.
+     It slides in from the element's left edge: the clip moves against the
+     transform on the same timing, so the part left of that edge is always
+     cut away and the drawer never shows over the host page (the element may
+     sit anywhere, e.g. in a panel on the right of the screen). */
   .mpv[data-height] .mpv-sidebar {
     grid-column: 1;
     z-index: 3;
@@ -616,22 +652,62 @@
     background: var(--mpv-color-bg, Canvas);
     color: var(--mpv-color-text, CanvasText);
     box-shadow: 4px 0 16px rgba(0, 0, 0, 0.15);
-    transform: translateX(-105%);
+    transform: translateX(-100%);
+    clip-path: inset(0 -24px 0 100%);
     visibility: hidden;
-    transition: transform 0.2s, visibility 0.2s;
+    transition:
+      transform 0.2s ease,
+      clip-path 0.2s ease,
+      visibility 0s 0.2s;
   }
 
   .mpv[data-height][data-sidebar-open] .mpv-sidebar {
     transform: none;
+    clip-path: inset(0 -24px 0 0);
     visibility: inherit;
+    transition:
+      transform 0.2s ease,
+      clip-path 0.2s ease,
+      visibility 0s;
   }
 
-  .mpv[data-sidebar-open] .mpv-backdrop {
+  /* The body behind darkens and lightens with the drawer. */
+  .mpv-backdrop {
     display: block;
     position: absolute;
     z-index: 2;
     inset: var(--_bar-h, 0px) 0 0 0;
     background: rgba(0, 0, 0, 0.25);
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity 0.2s ease,
+      visibility 0s 0.2s;
+  }
+
+  .mpv[data-sidebar-open] .mpv-backdrop {
+    opacity: 1;
+    visibility: inherit;
+    transition:
+      opacity 0.2s ease,
+      visibility 0s;
+  }
+}
+
+/* Opening and closing without movement for those who ask for less motion.
+   The same selectors as above, so these come later and win. */
+@media (prefers-reduced-motion: reduce) {
+  .mpv-sidebar,
+  .mpv-toc,
+  .mpv-main,
+  .mpv[data-sidebar-closed] .mpv-sidebar,
+  .mpv[data-toc-closed] .mpv-toc,
+  .mpv[data-height] .mpv-sidebar,
+  .mpv[data-height][data-sidebar-open] .mpv-sidebar,
+  .mpv-backdrop,
+  .mpv[data-sidebar-open] .mpv-backdrop,
+  .mpv-toggle::before {
+    transition: none;
   }
 }
 

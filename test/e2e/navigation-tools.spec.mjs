@@ -115,6 +115,41 @@ test('[表示/今の章] 見出しのすぐ後に小見出しが続く場合も�
   await expect.poll(() => tocState(viewer)).toEqual({ shown: ['X', 'Y', 'Y1', 'Z'], current: ['Y1'] });
 });
 
+test('[表示/今の章] それ以上スクロールできず見出しが上端に来られないときも、目次で選んだ見出しが強調される。上へスクロールすると読んでいる見出しに戻る', async ({ page }) => {
+  await page.goto(BLANK);
+  const FIT_MD = ['# 収まるページ', '## P', 'p の本文', '## Q', 'q の本文', '## R', 'r の本文'].join('\n\n');
+  const END_MD = ['# 終わりが短いページ', '## L', filler('L'), '## S', 's の本文', '## T', 't の本文'].join('\n\n');
+  const viewer = await mount(page, {
+    options: {
+      pages: [
+        { id: 'fit', parentId: null, title: '収まるページ', order: 1, md: FIT_MD },
+        { id: 'end', parentId: null, title: '終わりが短いページ', order: 2, md: END_MD },
+      ],
+    },
+  });
+  await expect(h1(viewer)).toHaveText('収まるページ');
+
+  // 画面に全体が収まりスクロールしないページ：選んだ見出しが強調され、URL の # も変わる
+  expect(await page.evaluate(() => document.documentElement.scrollHeight <= window.innerHeight)).toBe(true);
+  expect((await tocState(viewer)).current).toEqual(['P']);
+  await toc(viewer).locator('a', { hasText: /^R$/ }).click();
+  await expect.poll(async () => (await tocState(viewer)).current).toEqual(['R']);
+  await toc(viewer).locator('a', { hasText: /^Q$/ }).click();
+  await expect.poll(async () => (await tocState(viewer)).current).toEqual(['Q']);
+  expect((await urlState(page)).hash).toBe('Q');
+
+  // 最後の短い章：いちばん下まで行っても上端に来られない見出しのうち、最後でないほうを選んでも、その見出し
+  await sidebarLink(viewer, '終わりが短いページ').click();
+  await expect(h1(viewer)).toHaveText('終わりが短いページ');
+  await toc(viewer).locator('a', { hasText: /^S$/ }).click();
+  await expect.poll(async () => (await tocState(viewer)).current).toEqual(['S']);
+  expect(await page.evaluate(() => window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2)).toBe(true);
+
+  // 上へスクロールすると、上端の線で決まる読んでいる見出しに戻る
+  await page.evaluate(() => window.scrollBy(0, -300));
+  await expect.poll(async () => (await tocState(viewer)).current).toEqual(['L']);
+});
+
 // ======================================================================
 // 表示/ツールバー
 // ======================================================================
@@ -220,10 +255,160 @@ test('[表示/ツールバー] 狭い表示幅では、左端のボタンでペ�
 });
 
 // ======================================================================
+// 表示/開閉の動き
+// ======================================================================
+
+/**
+ * Presses the toolbar button `name` and, in the same task (so a busy test
+ * run cannot let the movement end first), stops every transition it started
+ * at `ms` from its start. Returns the properties that move.
+ */
+const clickAndPause = (viewer, name, ms) =>
+  viewer.evaluate(
+    (el, [name, ms]) => {
+      el.shadowRoot.querySelector(`[part~="${name}"]`).click();
+      const moving = [];
+      for (const animation of el.shadowRoot.getAnimations()) {
+        animation.pause();
+        animation.currentTime = ms;
+        moving.push(animation.transitionProperty);
+      }
+      return moving;
+    },
+    [name, ms],
+  );
+const finishTransitions = (viewer) => viewer.evaluate((el) => el.shadowRoot.getAnimations().forEach((animation) => animation.finish()));
+/** Whether the point (x, y) of the page hits the viewer (its own area or anything of it drawn outside). */
+const hitsViewer = (page, x, y) => page.evaluate(([x, y]) => document.elementFromPoint(x, y)?.localName === 'md-pages-viewer', [x, y]);
+
+test('[表示/開閉の動き] 狭い表示幅のページ一覧は、要素の左端から本文の上へ滑って開閉し、要素の外には出ない。後ろは徐々に暗くなる', async ({ page }) => {
+  await page.goto(BLANK);
+  const viewer = await mount(page, { options: { pages: LONG_PAGES }, style: 'width: 600px; margin-left: 300px' });
+  await expect(h1(viewer)).toHaveText('長いページ');
+  const sidebar = part(viewer, 'sidebar');
+  const backdrop = viewer.locator('.mpv-backdrop');
+  const area = await box(viewer);
+
+  // 開く途中：ページ一覧は動いていて、要素の左の外（組み込み先の画面）には出ていない
+  expect(await clickAndPause(viewer, 'sidebar-toggle', 100)).toEqual(expect.arrayContaining(['transform', 'opacity']));
+  const opening = await box(sidebar);
+  expect(opening.left).toBeLessThan(area.left - 1);
+  expect(opening.right).toBeGreaterThan(area.left + 1);
+  const middle = opening.top + 40;
+  expect(await hitsViewer(page, area.left - 20, middle)).toBe(false);
+  expect(await hitsViewer(page, area.left + 5, middle)).toBe(true);
+  const dim = Number(await backdrop.evaluate((el) => getComputedStyle(el).opacity));
+  expect(dim).toBeGreaterThan(0);
+  expect(dim).toBeLessThan(1);
+
+  // 開き終わり：要素の左端にそろう
+  await finishTransitions(viewer);
+  expect((await box(sidebar)).left).toBeCloseTo(area.left, 0);
+
+  // 閉じる途中も見えたまま動き、閉じ終わると隠れる
+  expect(await clickAndPause(viewer, 'sidebar-toggle', 100)).toEqual(expect.arrayContaining(['transform', 'opacity']));
+  await expect(sidebar).toBeVisible();
+  expect((await box(sidebar)).left).toBeLessThan(area.left - 1);
+  expect(await hitsViewer(page, area.left - 20, middle)).toBe(false);
+  await finishTransitions(viewer);
+  await expect(sidebar).toBeHidden();
+  await expect(backdrop).toBeHidden();
+});
+
+test('[表示/開閉の動き] 広い表示幅では、ページ一覧と目次が幅を縮めて閉じ、幅を広げて開く。途中で中の文字は折り返さない', async ({ page }) => {
+  await page.goto(BLANK);
+  const viewer = await mount(page, { options: { pages: LONG_PAGES } });
+  await expect(h1(viewer)).toHaveText('長いページ');
+  const sidebar = part(viewer, 'sidebar');
+  const tocColumn = part(viewer, 'toc');
+  const full = (await box(sidebar)).width;
+  const tocFull = (await box(tocColumn)).width;
+  const lineHeight = (await box(sidebarLink(viewer, '短いページ'))).height;
+
+  expect(await clickAndPause(viewer, 'sidebar-toggle', 100)).toContain('width');
+  const closing = (await box(sidebar)).width;
+  expect(closing).toBeGreaterThan(1);
+  expect(closing).toBeLessThan(full - 1);
+  expect((await box(sidebarLink(viewer, '短いページ'))).height).toBeCloseTo(lineHeight, 0);
+  await finishTransitions(viewer);
+  await expect(sidebar).toBeHidden();
+
+  expect(await clickAndPause(viewer, 'toc-toggle', 100)).toContain('width');
+  const tocClosing = (await box(tocColumn)).width;
+  expect(tocClosing).toBeGreaterThan(1);
+  expect(tocClosing).toBeLessThan(tocFull - 1);
+  await finishTransitions(viewer);
+  await expect(tocColumn).toBeHidden();
+
+  // 開くときは、押した直後から見えて、幅が広がっていく
+  expect(await clickAndPause(viewer, 'sidebar-toggle', 100)).toContain('width');
+  await expect(sidebar).toBeVisible();
+  const opening = (await box(sidebar)).width;
+  expect(opening).toBeGreaterThan(1);
+  expect(opening).toBeLessThan(full - 1);
+  await finishTransitions(viewer);
+  expect((await box(sidebar)).width).toBeCloseTo(full, 0);
+});
+
+test('[表示/開閉の動き] ページ一覧で子ページを開閉すると、その場で高さが伸び縮みし、矢印も回る。ページは切り替わらない', async ({ page }) => {
+  await page.goto(BLANK);
+  const viewer = await mount(page, { options: { pages: SAMPLE } });
+  await expect(h1(viewer)).toHaveText('はじめに');
+  // 「はじめに」の子ページの並び（最初の開閉ボタンは「はじめに」のもの）
+  const branch = viewer.locator('.mpv-tree > li:first-child > ul');
+  await expect(sidebarLink(viewer, 'ログイン方法')).toBeVisible();
+  const full = (await box(branch)).height;
+
+  // 閉じる途中：高さが縮んでいき、閉じ終わると隠れる
+  expect(await clickAndPause(viewer, 'toggle', 100)).toContain('transform');
+  const closing = (await box(branch)).height;
+  expect(closing).toBeGreaterThan(1);
+  expect(closing).toBeLessThan(full - 1);
+  await finishTransitions(viewer);
+  await expect(sidebarLink(viewer, 'ログイン方法')).toBeHidden();
+
+  // 開く途中：押した直後から見えて、高さが伸びていく
+  expect(await clickAndPause(viewer, 'toggle', 100)).toContain('transform');
+  await expect(sidebarLink(viewer, 'ログイン方法')).toBeVisible();
+  const opening = (await box(branch)).height;
+  expect(opening).toBeGreaterThan(1);
+  expect(opening).toBeLessThan(full - 1);
+  await finishTransitions(viewer);
+  expect((await box(branch)).height).toBeCloseTo(full, 0);
+  await expect(h1(viewer)).toHaveText('はじめに');
+
+  // 動きを減らす設定では、動かさずにすぐ切り替わる
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  expect(await clickAndPause(viewer, 'toggle', 100)).toEqual([]);
+  await expect(sidebarLink(viewer, 'ログイン方法')).toBeHidden();
+  expect(await clickAndPause(viewer, 'toggle', 100)).toEqual([]);
+  expect((await box(branch)).height).toBeCloseTo(full, 0);
+});
+
+test('[表示/開閉の動き] 動きを減らす設定（prefers-reduced-motion）では、動かさずにすぐ開閉する', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto(BLANK);
+  const viewer = await mount(page, { options: { pages: LONG_PAGES } });
+  await expect(h1(viewer)).toHaveText('長いページ');
+  const moving = () => viewer.evaluate((el) => el.shadowRoot.getAnimations().map((animation) => animation.transitionProperty));
+
+  await part(viewer, 'sidebar-toggle').click();
+  await part(viewer, 'toc-toggle').click();
+  expect(await moving()).toEqual([]);
+  expect(await part(viewer, 'sidebar').isHidden()).toBe(true);
+  expect(await part(viewer, 'toc').isHidden()).toBe(true);
+
+  await viewer.evaluate((el) => (el.style.width = '600px'));
+  await part(viewer, 'sidebar-toggle').click();
+  expect(await moving()).toEqual([]);
+  expect((await box(part(viewer, 'sidebar'))).left).toBeCloseTo((await box(viewer)).left, 0);
+});
+
+// ======================================================================
 // 表示/前後のページ
 // ======================================================================
 
-test('[表示/前後のページ] 本文の最後に、ページ一覧の順で前と次のページへのリンクが出て、押すとそのページに切り替わる', async ({ page }) => {
+test('[表示/前後のページ] 本文や子ページの一覧の最後に、ページ一覧の順で前と次のページへのリンクが出て、押すとそのページに切り替わる', async ({ page }) => {
   await page.goto(BLANK);
   const viewer = await mount(page, { options: { pages: SAMPLE } });
   await expect(h1(viewer)).toHaveText('はじめに');
@@ -250,11 +435,22 @@ test('[表示/前後のページ] 本文の最後に、ページ一覧の順で�
   await previous.click();
   await expect(h1(viewer)).toHaveText('深い階層');
 
-  // 子ページの一覧のページと、ページが見つからないときは出ない
+  // 子ページの一覧のページでも、一覧の下に出て、前後どちらへも行き来できる
   await viewer.evaluate((el) => (el.pages = [...el.pages, { id: 'group', parentId: null, title: 'まとめ', order: 3 }, { id: 'child', parentId: 'group', title: '子', md: '# 子' }]));
   await sidebarLink(viewer, 'まとめ').click();
   await expect(part(viewer, 'child-list')).toBeVisible();
-  await expect(pager).toBeHidden();
+  await expect(previous).toHaveText('前へFAQ');
+  await expect(next).toHaveText('次へまとめ › 子');
+  expect((await box(pager)).top).toBeGreaterThan((await box(part(viewer, 'child-list'))).bottom - 1);
+  await next.click();
+  await expect(h1(viewer)).toHaveText('子');
+  await expect(previous).toHaveText('前へまとめ');
+  await previous.click();
+  await expect(part(viewer, 'child-list')).toBeVisible();
+  await previous.click();
+  await expect(h1(viewer)).toHaveText('FAQ');
+
+  // ページが見つからないときは出ない
   await viewer.evaluate((el) => (el.currentId = 'nope'));
   await expect(viewer.locator('.mpv-body-status')).toBeVisible();
   await expect(pager).toBeHidden();
@@ -390,19 +586,23 @@ test('[表示/検索] 「/」キーで検索欄に移る。入力欄の中では
 
 test('[表示/検索] 検索欄を使えないとき（ページなし）は「/」キーを取らず、閉じた Shadow DOM の中に置かれても検索欄に「/」を入力できる', async ({ page }) => {
   await page.goto(BLANK);
-  const prevented = () =>
-    page.evaluate(
-      () =>
-        new Promise((resolve) => {
-          window.addEventListener('keydown', (event) => resolve(event.defaultPrevented), { once: true });
-        }),
-    );
+  // Starts listening for the next keydown and waits until it listens, so the
+  // key cannot be pressed before (a busy page may handle the key first).
+  // Returns a function that gives whether that keydown was prevented.
+  const listenForKey = async () => {
+    await page.evaluate(() => {
+      window.__prevented = new Promise((resolve) => {
+        window.addEventListener('keydown', (event) => resolve(event.defaultPrevented), { once: true });
+      });
+    });
+    return () => page.evaluate(() => window.__prevented);
+  };
   // ページなし：ツールバーごと出ないので、組み込み先の「/」はそのまま
   await mount(page, { options: { pages: [] } });
   await expect(page.locator('md-pages-viewer .mpv-body-status')).toContainText('ページがありません');
-  let result = prevented();
+  let prevented = await listenForKey();
   await page.keyboard.press('/');
-  expect(await result).toBe(false);
+  expect(await prevented()).toBe(false);
 
   // 閉じた Shadow DOM の中：自分の検索欄に入力中の「/」は取らない
   await page.goto(BLANK);
@@ -422,9 +622,9 @@ test('[表示/検索] 検索欄を使えないとき（ページなし）は「/
 
   // 外から「/」を押すと検索欄に移る
   await page.evaluate(() => window.__search().blur());
-  result = prevented();
+  prevented = await listenForKey();
   await page.keyboard.press('/');
-  expect(await result).toBe(true);
+  expect(await prevented()).toBe(true);
   expect(await page.evaluate(() => window.__search().matches(':focus'))).toBe(true);
 });
 
@@ -443,4 +643,102 @@ test('[表示/検索] 検索中にページ一覧が変わると結果も作り�
   await expect(viewer.locator('.mpv')).not.toHaveAttribute('data-sidebar-open', '');
   await part(viewer, 'search-result').click();
   await expect(h1(viewer)).toHaveText('新しいページ');
+});
+
+/**
+ * `n` manual pages of about 3 KB of Markdown each (5 sections with text, a
+ * list and a table) under 10 categories. Only the last page in the sidebar
+ * (p{n-1}, the last child of the last category) holds the word "ゆうびんばこ".
+ * `extra` adds Markdown at the end of a page's body ({p0: '...'}).
+ * Made in the page, so the list is not sent through the test runner.
+ */
+const mountManyPages = (page, n, extra = {}) =>
+  page.evaluate(({ n, extra }) => {
+    const section = (p, s) =>
+      `## 手順${s}（ページ${p}）\n\n` +
+      'この章では、店舗の設定を変更する手順を説明します。画面右上のメニューから設定を開き、必要な項目を入力して保存します。入力した内容は、保存するとすぐに反映されます。\n\n' +
+      '- 項目Aを入力する\n- 項目Bを選ぶ\n- 保存ボタンを押す\n\n' +
+      '| 項目 | 内容 |\n| --- | --- |\n| 名前 | 店舗の名前 |\n| 住所 | 店舗の住所 |\n\n';
+    const pages = [];
+    for (let c = 0; c < 10; c++) pages.push({ id: `c${c}`, parentId: null, title: `カテゴリ${c}`, order: c });
+    for (let p = 0; p < n; p++) {
+      const last = p === n - 1 ? '最後のページにだけある語：ゆうびんばこ\n' : '';
+      const md = `# マニュアル${p}\n\n${[1, 2, 3, 4, 5].map((s) => section(p, s)).join('')}${last}${extra[`p${p}`] ?? ''}`;
+      pages.push({ id: `p${p}`, parentId: `c${p % 10}`, title: `マニュアル${p}`, order: p, md });
+    }
+    const el = document.createElement('md-pages-viewer');
+    el.currentId = 'p0';
+    el.pages = pages;
+    document.body.append(el);
+  }, { n, extra });
+
+/** Types `value` into the search box as one input event; returns how long the event took (ms). */
+const typeTimed = (input, value) =>
+  input.evaluate((el, value) => {
+    const start = performance.now();
+    el.value = value;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    return performance.now() - start;
+  }, value);
+
+test('[表示/検索（ページが多いとき）] 2000ページでも入力で画面が止まらず、読み終えるまで「検索しています…」が出て、最後のページの本文まで見つかる', async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto(BLANK);
+  await mountManyPages(page, 2000);
+  const viewer = page.locator('md-pages-viewer');
+  await expect(h1(viewer)).toHaveText('マニュアル0');
+  // Tasks over 50 ms on the main thread, from here on.
+  await page.evaluate(() => {
+    window.__longTasks = [];
+    new PerformanceObserver((list) => window.__longTasks.push(...list.getEntries().map((entry) => entry.duration))).observe({ type: 'longtask' });
+  });
+
+  const input = part(viewer, 'search-input');
+  await input.focus();
+  expect(await typeTimed(input, 'ゆうびんばこ')).toBeLessThan(200);
+  // Not "no match" while pages are still being read.
+  await expect(part(viewer, 'search-empty')).toHaveText('検索しています…');
+  await expect
+    .poll(() => results(viewer), { timeout: 30_000 })
+    .toEqual([{ page: 'カテゴリ9 › マニュアル1999', heading: '手順5（ページ1999）', snippet: expect.stringContaining('ゆうびんばこ'), marks: ['ゆうびんばこ'] }]);
+  await expect(part(viewer, 'search-empty')).toHaveCount(0);
+  expect(await page.evaluate(() => Math.max(0, ...window.__longTasks))).toBeLessThan(200);
+
+  // Once read, each keystroke searches all 2000 pages quickly.
+  expect(await typeTimed(input, '店舗の設定')).toBeLessThan(100);
+  await expect(part(viewer, 'search-result')).toHaveCount(50);
+  await expect(part(viewer, 'search-empty')).toHaveCount(0);
+});
+
+test('[表示/検索（ページが多いとき）] 読んでいる途中で結果が増えても選んだ結果はそのままで、要素を外して戻しても最後まで読む', async ({ page }) => {
+  test.setTimeout(60_000);
+  await page.goto(BLANK);
+  // A body match on the first page read, and a heading match (listed before body matches) on the last.
+  await mountManyPages(page, 2000, { p0: '\n\nりんごあめの話\n', p1999: '\n\n## りんごあめの手順\n\n本文\n' });
+  const viewer = page.locator('md-pages-viewer');
+  await expect(h1(viewer)).toHaveText('マニュアル0');
+  const input = part(viewer, 'search-input');
+  await input.focus();
+  await typeTimed(input, 'りんごあめ');
+  const firstPageMatch = { page: 'カテゴリ0 › マニュアル0', heading: '手順5（ページ0）', snippet: expect.stringContaining('りんごあめの話'), marks: ['りんごあめ'] };
+  await expect.poll(() => results(viewer)).toEqual([firstPageMatch]);
+  await expect(part(viewer, 'search-empty')).toHaveText('検索しています…');
+  expect(await selected(viewer)).toBe(0);
+
+  // Taken out while reading, and put back.
+  await viewer.evaluate((el) => {
+    window.__viewer = el;
+    el.remove();
+  });
+  await page.waitForTimeout(300);
+  await page.evaluate(() => document.body.append(window.__viewer));
+  await expect
+    .poll(() => results(viewer), { timeout: 30_000 })
+    .toEqual([{ page: 'カテゴリ9 › マニュアル1999', heading: 'りんごあめの手順', snippet: null, marks: ['りんごあめ'] }, firstPageMatch]);
+  await expect(part(viewer, 'search-empty')).toHaveCount(0);
+  // The heading match came in above it, but the selection stayed on the same result.
+  expect(await selected(viewer)).toBe(1);
+  await input.focus();
+  await page.keyboard.press('Enter');
+  await expect(h1(viewer)).toHaveText('マニュアル0');
 });
