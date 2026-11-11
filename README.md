@@ -43,7 +43,7 @@ CDN から読み込みます。
 <script src="https://cdn.jsdelivr.net/npm/md-pages-viewer@1/dist/md-pages-viewer.js"></script>
 ```
 
-外部の CDN に接続できない環境では、`md-pages-viewer.js` を自分のサーバーに置いて読み込みます。CSS はこのファイルに含まれているので、`<link>` は要りません。ファイルの大きさは約137KB（gzip で約45KB）で、Markdown の変換（marked）とサニタイズ（DOMPurify）を含みます。
+外部の CDN に接続できない環境では、`md-pages-viewer.js` を自分のサーバーに置いて読み込みます。CSS はこのファイルに含まれているので、`<link>` は要りません。ファイルの大きさは約149KB（gzip で約47KB）で、Markdown の変換（marked）とサニタイズ（DOMPurify）を含みます。
 
 ビルドするプロジェクトでは npm からインストールします。
 
