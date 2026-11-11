@@ -30,7 +30,7 @@ VitePress や Docusaurus のような静的サイトジェネレーターは、M
 
 | デモ | 内容 |
 | --- | --- |
-| [埋め込みの例](https://koutakagatsume.github.io/md-pages-viewer/demo/embed.html) | 架空の店舗管理アプリの、管理画面の1ページに置いた例と、画面の右のヘルプパネルに置いた例。テーマ（ライト・ダーク）と高さの指定を切り替えられます |
+| [埋め込みの例](https://koutakagatsume.github.io/md-pages-viewer/demo/embed.html) | 架空の店舗管理アプリに組み込んだ例。左のメニューの「ヘルプ」では管理画面の1ページに、ほかの画面ではヘッダーの「ヘルプ」で右のヘルプパネルにマニュアルを出します。中身はこのライブラリの使い方と、店舗管理のマニュアルの例です。テーマ（ライト・ダーク）と高さの指定を切り替えられます |
 | [タグで置いた例](https://koutakagatsume.github.io/md-pages-viewer/demo/index.html) | このライブラリの説明を表示します。ページの一覧を JSON の URL で渡し、本文の多くは md ファイルの URL で渡しています |
 | [`new MdPagesViewer()` の例](https://koutakagatsume.github.io/md-pages-viewer/demo/new.html) | 高さを指定した枠に入れた例。サイドバー・本文・目次がそれぞれの中でスクロールします |
 | [CDN から読み込む例](https://koutakagatsume.github.io/md-pages-viewer/demo/cdn.html) | 1つの HTML ファイルで完結する例。ダウンロードして、そのまま開いても動きます |
