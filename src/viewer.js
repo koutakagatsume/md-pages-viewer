@@ -3,14 +3,15 @@
 
 import { TAG, defineElement } from './element.js';
 
-const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles'];
+const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts'];
 
 export class MdPagesViewer {
   /**
    * @param {Element|string} target element or selector; its content is replaced
    * @param {{pages?: object[]|string, currentId?: string|number, baseUrl?: string,
    *   imageResolver?: (path: string, page: object) => string,
-   *   fetch?: typeof fetch, urlParam?: string|false, styles?: string}} [options]
+   *   fetch?: typeof fetch, urlParam?: string|false, styles?: string,
+   *   locale?: string, texts?: object}} [options]
    */
   constructor(target, options = {}) {
     defineElement();

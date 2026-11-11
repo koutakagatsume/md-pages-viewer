@@ -65,7 +65,7 @@ import { MdPagesViewer } from 'md-pages-viewer';
 <md-pages-viewer pages="/api/manual/pages" current-id="intro"></md-pages-viewer>
 ```
 
-配列と関数は、JS で要素のプロパティに設定します。
+配列・関数・オブジェクト（`texts`）は、JS で要素のプロパティに設定します。
 
 ```js
 const viewer = document.querySelector('md-pages-viewer');
@@ -134,6 +134,8 @@ viewer.element.currentId = 'faq';
 | `fetch` | なし | 関数 | 一覧と本文の取得に使う関数（ブラウザの `fetch` と同じ引数・戻り値）。別オリジンの API に Cookie や認証ヘッダーを付けるときに使います |
 | `urlParam` | `url-param` | string / false | URL に反映するクエリの名前（初期値 `page`）。`false` で反映しません |
 | `styles` | なし | string | 表示領域の中に追加する CSS（「見た目の変更」を参照） |
+| `locale` | `locale` | string | 画面の文言の言語（初期値 `ja`）。「画面の言語と文言」を参照 |
+| `texts` | なし | オブジェクト | 画面の文言を1つずつ置き換えます。「画面の言語と文言」を参照 |
 
 `fetch` や `imageResolver` を使う場合は、`pages` を属性ではなくプロパティで、それらより後に設定してください。
 
@@ -172,7 +174,7 @@ viewer.element.currentId = 'faq';
 > 1枠の長さを変えても、すでに入っている予約はそのまま残ります。
 ```
 
-| 書き方 | 見出し | 色の CSS 変数（初期値） |
+| 書き方 | 見出し（日本語のとき） | 色の CSS 変数（初期値） |
 | --- | --- | --- |
 | `[!NOTE]` | 補足 | `--mpv-color-note`（`#2563eb`） |
 | `[!TIP]` | ヒント | `--mpv-color-tip`（`#16a34a`） |
@@ -194,6 +196,48 @@ viewer.element.currentId = 'faq';
   --mpv-color-caution: #f87171;
 }
 ```
+
+## 画面の言語と文言
+
+ボタンや検索欄などの文言の言語は、`locale` で選べます。日本語（`ja`、初期値）・英語（`en`）・中国語の簡体字（`zh-CN`）・繁体字（`zh-TW`）・韓国語（`ko`）が入っています。
+
+```html
+<md-pages-viewer pages="/api/manual/pages" locale="en"></md-pages-viewer>
+```
+
+`en-US` や `zh-Hant` のような書き方でも選べます。入っていない言語を指定すると、日本語で表示してコンソールに警告を出します。
+
+文言は `texts` で1つずつ変えられます。書いたものだけが変わり、ほかは `locale` の言語のままです。数などを出す文言は、それを受け取る関数で書きます。
+
+```js
+viewer.texts = {
+  search: '検索する！',
+  chapters: (n) => `全${n}章`,
+};
+```
+
+| キー | 使う場所 | 日本語の文言 |
+| --- | --- | --- |
+| `loading`・`failed`・`retry` | 読み込み中・読み込めなかったときの表示と、再読み込みのボタン | 読み込み中…・読み込めませんでした・再読み込み |
+| `notFound`・`noPages` | 存在しないページ・ページが1つもないときの表示 | ページが見つかりません・ページがありません |
+| `pageList` | サイドバーの読み上げ用の名前 | ページ一覧 |
+| `columnPages`・`columnContent` | サイドバーの見出し、子ページ一覧の表の見出しの行 | ページ・内容 |
+| `toc` | ページ内目次の見出し | 目次 |
+| `breadcrumb` | パンくずの読み上げ用の名前 | パンくずリスト |
+| `toggle` | サイドバーの開閉ボタンの読み上げ用の名前（関数。ページ名を受け取る） | （ページ名） 開閉 |
+| `chapters`・`childPages` | 子ページ一覧の章の数・子ページの数（関数。数を受け取る） | N章・Nページ |
+| `search`・`searchLabel` | 検索欄の薄い文字と、読み上げ用の名前 | 検索・ページを検索 |
+| `searching` | 読み終えるまでの検索結果 | 検索しています… |
+| `noResults` | 一致がないときの検索結果（関数。入力した語を受け取る） | 「（語）」に一致するページはありません |
+| `sidebarClose`・`sidebarOpen` | サイドバーを閉じる・開くボタン | ページ一覧を閉じる・ページ一覧を開く |
+| `tocClose`・`tocOpen` | 目次を閉じる・開くボタン | 目次を閉じる・目次を開く |
+| `viewCard`・`viewList` | 子ページ一覧の形を切り替えるボタン | カード表示・一覧表示 |
+| `pager`・`previous`・`next` | 前後のページ（読み上げ用の名前と、前・次の文字） | 前後のページ・前へ・次へ |
+| `calloutNote`・`calloutTip`・`calloutImportant`・`calloutWarning`・`calloutCaution` | 注意・ヒントの囲みの見出し | 補足・ヒント・重要・注意・警告 |
+
+- 表示した後に `locale` や `texts` を変えると、ページとスクロール位置はそのままで、文言がすぐ変わります。`texts` を変えるときは、新しいオブジェクトを設定してください
+- 表にないキーや、関数のはずの文言に文字列を書いたものは、コンソールに警告を出して使いません
+- ページの名前と本文は訳しません。言語を切り替えるときは、`locale` と一緒にその言語のページのデータを `pages` に渡してください。言語を切り替えるボタンは、組み込み先の画面に置きます
 
 ## URL への反映
 

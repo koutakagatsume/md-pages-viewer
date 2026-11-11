@@ -96,12 +96,15 @@ const MARK = 'data-mpv-';
  *   link: (href: string) => {type: string, id?: string, hash?: string, url?: string},
  *   pageHref: (id: string, hash: string) => string,
  * }} resolve
- * @param {{inert?: boolean}} [options] inert: keep the result in the template's
- *   document, which has no browsing context, so nothing in it ever loads (for
- *   reading text only). Otherwise the result belongs to the page's document.
+ * @param {{inert?: boolean, calloutLabels?: Record<string, string>}} [options]
+ *   inert: keep the result in the template's document, which has no browsing
+ *   context, so nothing in it ever loads (for reading text only). Otherwise
+ *   the result belongs to the page's document. calloutLabels: the heading of
+ *   each kind of callout (note, tip, important, warning, caution), in the
+ *   viewer's language; a kind not given is headed by its name.
  * @returns {DocumentFragment}
  */
-export function renderMarkdown(markdown, resolve, { inert = false } = {}) {
+export function renderMarkdown(markdown, resolve, { inert = false, calloutLabels = {} } = {}) {
   const template = document.createElement('template');
   template.innerHTML = trustedHtml(marked.parse(markdown));
   // Everything below works on this one tree and it is never serialized and
@@ -169,7 +172,7 @@ export function renderMarkdown(markdown, resolve, { inert = false } = {}) {
     box.append(table);
   }
 
-  makeCallouts(root);
+  makeCallouts(root, calloutLabels);
 
   for (const a of root.querySelectorAll('a, area')) {
     const link = links.get(a);
@@ -201,7 +204,6 @@ export function renderMarkdown(markdown, resolve, { inert = false } = {}) {
 
 // ---- callouts: "> [!NOTE]" and the like, written as on GitHub (spec 5.4) ----
 
-const CALLOUT_LABEL = { note: '補足', tip: 'ヒント', important: '重要', warning: '注意', caution: '警告' };
 // Line icons on a 24x24 grid, drawn with currentColor: [tag, attributes] pairs.
 const CALLOUT_ICON = {
   note: [['circle', { cx: 12, cy: 12, r: 9 }], ['path', { d: 'M12 11v5M12 8h.01' }]],
@@ -234,7 +236,7 @@ function calloutIcon(doc, type) {
  * the marker's line, a quote inside a quote) stays a quote. Run after
  * sanitizing: the box and its heading are ours.
  */
-function makeCallouts(root) {
+function makeCallouts(root, labels) {
   const doc = root.ownerDocument;
   for (const quote of root.querySelectorAll('blockquote')) {
     if (quote.parentElement && quote.parentElement.closest('blockquote')) continue;
@@ -262,7 +264,7 @@ function makeCallouts(root) {
     const title = doc.createElement('p');
     title.className = 'mpv-callout-title';
     title.setAttribute('part', 'callout-title');
-    title.append(calloutIcon(doc, type), CALLOUT_LABEL[type]);
+    title.append(calloutIcon(doc, type), labels[type] ?? type);
     box.append(title, ...quote.childNodes);
     quote.replaceWith(box);
   }

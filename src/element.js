@@ -5,40 +5,12 @@ import css from './styles.css';
 import { buildModel, resolveInitialPage } from './pages.js';
 import { classifyLink, decodeFragment, headingId, pageUrl, resolveImage } from './paths.js';
 import { renderMarkdown, safeImageUrl } from './markdown.js';
+import { resolveTexts } from './texts.js';
 
 export const TAG = 'md-pages-viewer';
 
-const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles'];
-const ATTRIBUTES = { pages: 'pages', 'current-id': 'currentId', 'base-url': 'baseUrl', 'url-param': 'urlParam' };
-
-const TEXT = {
-  loading: '読み込み中…',
-  failed: '読み込めませんでした',
-  retry: '再読み込み',
-  notFound: 'ページが見つかりません',
-  empty: 'ページがありません',
-  toc: '目次',
-  pages: 'ページ一覧',
-  breadcrumb: 'パンくずリスト',
-  toggle: '開閉',
-  chapters: (count) => `${count}章`,
-  childPages: (count) => `${count}ページ`,
-  search: '検索',
-  searchLabel: 'ページを検索',
-  noResults: (query) => `「${query}」に一致するページはありません`,
-  searching: '検索しています…',
-  sidebarClose: 'ページ一覧を閉じる',
-  sidebarOpen: 'ページ一覧を開く',
-  tocClose: '目次を閉じる',
-  tocOpen: '目次を開く',
-  viewCard: 'カード表示',
-  viewList: '一覧表示',
-  columnPages: 'ページ',
-  columnContent: '内容',
-  pager: '前後のページ',
-  previous: '前へ',
-  next: '次へ',
-};
+const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts'];
+const ATTRIBUTES = { pages: 'pages', 'current-id': 'currentId', 'base-url': 'baseUrl', 'url-param': 'urlParam', locale: 'locale' };
 
 /** At most this many search results are listed (spec 5.4). */
 const SEARCH_RESULTS_SHOWN = 50;
@@ -94,8 +66,9 @@ const ICONS = {
 // Built with DOM calls rather than innerHTML: a page that enforces Trusted
 // Types must be able to show these parts (and any error) without our policy.
 // The `part` names are public: hosts style them with ::part() (spec 5.8).
+// The words on them are put in afterwards (#applyTexts), in the chosen language.
 function buildParts() {
-  const retryButton = (extra) => h('button', { type: 'button', class: `mpv-button ${extra}`, part: 'retry-button', hidden: true }, TEXT.retry);
+  const retryButton = (extra) => h('button', { type: 'button', class: `mpv-button ${extra}`, part: 'retry-button', hidden: true });
   const tocList = () => h('ul', { class: 'mpv-toc-list' });
   return [
     h('div', { class: 'mpv-probe', 'aria-hidden': 'true' }),
@@ -109,34 +82,34 @@ function buildParts() {
         h(
           'div',
           { class: 'mpv-toolbar', part: 'toolbar' },
-          h('button', { type: 'button', class: 'mpv-tool mpv-sidebar-toggle', part: 'sidebar-toggle', 'aria-label': TEXT.sidebarClose, title: TEXT.sidebarClose }, ICONS.sidebarClose()),
-          h('nav', { class: 'mpv-breadcrumb', part: 'breadcrumb', 'aria-label': TEXT.breadcrumb }, h('ol', {})),
+          h('button', { type: 'button', class: 'mpv-tool mpv-sidebar-toggle', part: 'sidebar-toggle', 'data-mpv-icon': 'sidebarClose' }, ICONS.sidebarClose()),
+          h('nav', { class: 'mpv-breadcrumb', part: 'breadcrumb' }, h('ol', {})),
           h(
             'div',
             { class: 'mpv-search-box', part: 'search' },
             ICONS.search(),
-            h('input', { type: 'search', class: 'mpv-search', part: 'search-input', placeholder: TEXT.search, 'aria-label': TEXT.searchLabel, autocomplete: 'off', 'aria-keyshortcuts': '/' }),
+            h('input', { type: 'search', class: 'mpv-search', part: 'search-input', autocomplete: 'off', 'aria-keyshortcuts': '/' }),
             h('kbd', { class: 'mpv-search-key', 'aria-hidden': 'true' }, '/'),
-            h('div', { class: 'mpv-search-results', part: 'search-results', role: 'region', 'aria-label': TEXT.searchLabel, hidden: true }),
+            h('div', { class: 'mpv-search-results', part: 'search-results', role: 'region', hidden: true }),
           ),
-          h('button', { type: 'button', class: 'mpv-tool mpv-view-toggle', part: 'view-toggle', hidden: true }, TEXT.viewCard),
-          h('button', { type: 'button', class: 'mpv-tool mpv-toc-toggle', part: 'toc-toggle', 'aria-label': TEXT.tocClose, title: TEXT.tocClose, hidden: true }, ICONS.tocClose()),
+          h('button', { type: 'button', class: 'mpv-tool mpv-view-toggle', part: 'view-toggle', hidden: true }),
+          h('button', { type: 'button', class: 'mpv-tool mpv-toc-toggle', part: 'toc-toggle', 'data-mpv-icon': 'tocClose', hidden: true }, ICONS.tocClose()),
         ),
         h(
           'nav',
-          { class: 'mpv-sidebar', part: 'sidebar', 'aria-label': TEXT.pages },
-          h('div', { class: 'mpv-column-head' }, TEXT.columnPages),
+          { class: 'mpv-sidebar', part: 'sidebar' },
+          h('div', { class: 'mpv-column-head' }),
           h('ul', { class: 'mpv-tree' }),
         ),
         h(
           'div',
           { class: 'mpv-main', part: 'main' },
-          h('details', { class: 'mpv-toc-mobile', part: 'toc-mobile', hidden: true }, h('summary', {}, TEXT.toc), tocList()),
+          h('details', { class: 'mpv-toc-mobile', part: 'toc-mobile', hidden: true }, h('summary', {}), tocList()),
           h('div', { class: 'mpv-body-status', part: 'status', role: 'status', hidden: true }, h('p', { class: 'mpv-body-status-text' }), retryButton('mpv-body-retry')),
           h('article', { class: 'mpv-content', part: 'content' }),
-          h('nav', { class: 'mpv-pager', part: 'pager', 'aria-label': TEXT.pager, hidden: true }),
+          h('nav', { class: 'mpv-pager', part: 'pager', hidden: true }),
         ),
-        h('nav', { class: 'mpv-toc', part: 'toc', 'aria-label': TEXT.toc, hidden: true }, h('div', { class: 'mpv-column-head' }, TEXT.toc), tocList()),
+        h('nav', { class: 'mpv-toc', part: 'toc', hidden: true }, h('div', { class: 'mpv-column-head' }), tocList()),
         h('div', { class: 'mpv-backdrop' }),
       ),
     ),
@@ -286,7 +259,10 @@ export class MdPagesViewerElement extends HTMLElement {
     return Object.keys(ATTRIBUTES);
   }
 
-  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined };
+  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined };
+  // The words on our parts (spec 5.10): made from locale and texts when first
+  // needed, and again after either changes.
+  #words = null;
   // Where the host's `styles` go: a constructed stylesheet after ours, or a
   // <style> after ours where constructed stylesheets are not supported.
   #librarySheet = null;
@@ -421,7 +397,11 @@ export class MdPagesViewerElement extends HTMLElement {
       toc: $('.mpv-toc'),
       tocLists: [$('.mpv-toc .mpv-toc-list'), $('.mpv-toc-mobile .mpv-toc-list')],
       backdrop: $('.mpv-backdrop'),
+      sidebarHead: $('.mpv-sidebar .mpv-column-head'),
+      tocHead: $('.mpv-toc .mpv-column-head'),
+      tocSummary: $('.mpv-toc-mobile summary'),
     };
+    this.#putTexts();
     root.addEventListener(
       'click',
       (event) => {
@@ -463,6 +443,10 @@ export class MdPagesViewerElement extends HTMLElement {
   set fetch(value) { this.#setOption('fetch', value); }
   get urlParam() { return this.#options.urlParam; }
   set urlParam(value) { this.#setOption('urlParam', value); }
+  get locale() { return this.#options.locale; }
+  set locale(value) { this.#setOption('locale', value); }
+  get texts() { return this.#options.texts; }
+  set texts(value) { this.#setOption('texts', value); }
   get styles() { return this.#options.styles; }
   set styles(value) {
     // Only the look changes, so it applies at once without drawing again.
@@ -555,6 +539,7 @@ export class MdPagesViewerElement extends HTMLElement {
 
   #setOption(key, value) {
     this.#options[key] = value;
+    if (key === 'locale' || key === 'texts') this.#words = null;
     this.#pending.add(key);
     this.#schedule();
   }
@@ -584,6 +569,8 @@ export class MdPagesViewerElement extends HTMLElement {
     const changed = new Set(this.#pending);
     this.#pending.clear();
     const { pages } = this.#options;
+    // The words change at once, whatever else is going on.
+    if (changed.has('locale') || changed.has('texts')) this.#applyTexts();
 
     if (pages === undefined || pages === null) {
       this.#reset();
@@ -694,14 +681,14 @@ export class MdPagesViewerElement extends HTMLElement {
       this.#onListLoaded([], { first });
       return;
     }
-    this.#showStatus(TEXT.loading);
+    this.#showStatus('loading');
     let list;
     try {
       list = await this.#fetchList(source);
     } catch (error) {
       if (token !== this.#listToken) return;
       warn(`Could not load the page list: ${error.message}`);
-      this.#showStatus(TEXT.failed, () => this.#loadList({ first: !this.#initialized }));
+      this.#showStatus('failed', () => this.#loadList({ first: !this.#initialized }));
       return;
     }
     if (token !== this.#listToken) return;
@@ -772,6 +759,56 @@ export class MdPagesViewerElement extends HTMLElement {
     if (name && result.kind !== 'empty') history.replaceState(history.state, '', pageUrl(location.href, name, result.id));
   }
 
+  // ---- the words on our parts (spec 5.10) ----
+
+  /**
+   * The words for `key` (see texts.js) in the chosen language. `value` goes
+   * to the words that show one: a number, the search words, a page's title.
+   */
+  #text(key, value) {
+    if (!this.#words) this.#words = resolveTexts(this.#options.locale, this.#options.texts, warn);
+    const words = this.#words[key];
+    return typeof words === 'function' ? words(value) : words;
+  }
+
+  /** Puts the words on the parts that are always there. */
+  #putTexts() {
+    const ui = this.#ui;
+    const label = (element, name, key) => element.setAttribute(name, this.#text(key));
+    for (const button of [ui.statusRetry, ui.bodyRetry]) button.textContent = this.#text('retry');
+    label(ui.breadcrumb, 'aria-label', 'breadcrumb');
+    label(ui.search, 'placeholder', 'search');
+    label(ui.search, 'aria-label', 'searchLabel');
+    label(ui.searchResults, 'aria-label', 'searchLabel');
+    label(ui.sidebar, 'aria-label', 'pageList');
+    ui.sidebarHead.textContent = this.#text('columnPages');
+    label(ui.toc, 'aria-label', 'toc');
+    ui.tocHead.textContent = this.#text('toc');
+    ui.tocSummary.textContent = this.#text('toc');
+    label(ui.pager, 'aria-label', 'pager');
+    for (const button of [ui.sidebarToggle, ui.tocToggle]) {
+      label(button, 'aria-label', button.dataset.mpvIcon);
+      label(button, 'title', button.dataset.mpvIcon);
+    }
+    ui.viewToggle.textContent = this.#text(this.#childView === 'list' ? 'viewCard' : 'viewList');
+  }
+
+  /**
+   * After a change of locale or texts: every word we show changes at once,
+   * the page staying where it is. A body is drawn again only while it is
+   * shown (its callouts carry words too); a "loading" or an error stays.
+   */
+  #applyTexts() {
+    this.#putTexts();
+    for (const text of [this.#ui.statusText, this.#ui.bodyStatusText]) {
+      if (text.dataset.mpvText) text.textContent = this.#text(text.dataset.mpvText);
+    }
+    this.#updateToolbar();
+    if (!this.#initialized) return;
+    this.#rerenderNavigation();
+    if (this.#ui.bodyStatus.hidden) this.#rerenderBody();
+  }
+
   /** After a change of urlParam, links in the sidebar and breadcrumb use the new name. */
   #rerenderNavigation() {
     const shown = this.#displayed;
@@ -801,7 +838,7 @@ export class MdPagesViewerElement extends HTMLElement {
     if (empty) {
       this.#ui.breadcrumb.hidden = true;
       this.#setToc([]);
-      this.#showBodyStatus(TEXT.empty);
+      this.#showBodyStatus('noPages');
       return;
     }
     const page = target.kind === 'page' ? this.#model.get(target.id) : undefined;
@@ -810,7 +847,7 @@ export class MdPagesViewerElement extends HTMLElement {
 
     if (!page) {
       this.#setToc([]);
-      this.#showBodyStatus(TEXT.notFound);
+      this.#showBodyStatus('notFound');
       this.#scroll(how, false);
       return;
     }
@@ -834,7 +871,7 @@ export class MdPagesViewerElement extends HTMLElement {
     const generation = this.#cacheGeneration;
     let page = this.#model.get(id);
     this.#setToc([]);
-    this.#showBodyStatus(TEXT.loading);
+    this.#showBodyStatus('loading');
     let text;
     try {
       text = await this.#fetchBody(page, generation);
@@ -863,7 +900,7 @@ export class MdPagesViewerElement extends HTMLElement {
       this.#renderBreadcrumb(page ? id : null);
       if (!page) {
         this.#displayed = { kind: 'missing', id };
-        this.#showBodyStatus(TEXT.notFound);
+        this.#showBodyStatus('notFound');
         return;
       }
       if (page.md !== null) {
@@ -893,7 +930,7 @@ export class MdPagesViewerElement extends HTMLElement {
   #showBodyError(id, how) {
     // The retry button starts over from "loading" (spec 5.2); a body that
     // arrived meanwhile from an earlier request is used without fetching.
-    this.#showBodyStatus(TEXT.failed, () => {
+    this.#showBodyStatus('failed', () => {
       this.#show(this.#model.has(id) ? { kind: 'page', id } : { kind: 'missing', id }, how);
     });
   }
@@ -935,12 +972,20 @@ export class MdPagesViewerElement extends HTMLElement {
         },
         link: (href) => classifyLink(href, page, this.#model, options),
         pageHref: (id, hash) => pageUrl(location.href, options.paramName, id, hash),
+      }, {
+        calloutLabels: {
+          note: this.#text('calloutNote'),
+          tip: this.#text('calloutTip'),
+          important: this.#text('calloutImportant'),
+          warning: this.#text('calloutWarning'),
+          caution: this.#text('calloutCaution'),
+        },
       });
     } catch (error) {
       // Never leave the previous page's body under the new sidebar/breadcrumb.
       warn(`Could not render page "${page.id}": ${error.message}`);
       this.#setToc([]);
-      this.#showBodyStatus(TEXT.failed);
+      this.#showBodyStatus('failed');
       return;
     }
     this.#markChildIndex(false);
@@ -967,9 +1012,9 @@ export class MdPagesViewerElement extends HTMLElement {
       let meta = '';
       if (child.md !== null) {
         const chapters = this.#outlineOf(child).sections.filter((section) => section.level === 'h2').length;
-        if (chapters > 0) meta = TEXT.chapters(chapters);
+        if (chapters > 0) meta = this.#text('chapters', chapters);
       } else if (child.src === null && grandchildren > 0) {
-        meta = TEXT.childPages(grandchildren);
+        meta = this.#text('childPages', grandchildren);
       }
       const link = h(
         'a',
@@ -988,8 +1033,8 @@ export class MdPagesViewerElement extends HTMLElement {
       h(
         'div',
         { class: 'mpv-children-head', part: 'child-list-head', 'aria-hidden': 'true' },
-        h('span', {}, TEXT.columnPages),
-        h('span', {}, TEXT.columnContent),
+        h('span', {}, this.#text('columnPages')),
+        h('span', {}, this.#text('columnContent')),
         h('span', {}),
       ),
       h('ul', { class: 'mpv-children', part: 'child-list' }, ...items),
@@ -1075,7 +1120,7 @@ export class MdPagesViewerElement extends HTMLElement {
           );
     const previous = at > 0 ? order[at - 1] : undefined;
     const next = at >= 0 && at < order.length - 1 ? order[at + 1] : undefined;
-    pager.replaceChildren(link(previous, 'previous', TEXT.previous), link(next, 'next', TEXT.next));
+    pager.replaceChildren(link(previous, 'previous', this.#text('previous')), link(next, 'next', this.#text('next')));
     pager.hidden = previous === undefined && next === undefined;
   }
 
@@ -1106,6 +1151,9 @@ export class MdPagesViewerElement extends HTMLElement {
     } catch {
       return empty;
     }
+    // A callout's heading is our word for its kind, not the page's text:
+    // it is not searched, and it would differ with the language.
+    for (const title of fragment.querySelectorAll('.mpv-callout-title')) title.remove();
     const taken = new Set([...fragment.querySelectorAll('[id]')].map((el) => el.id));
     assignHeadingIds(fragment, taken);
     const outline = { lead: '', sections: [] };
@@ -1450,21 +1498,24 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#ui.tocToggle.hidden = this.#tocItems.length === 0;
     this.#setToggle(this.#ui.tocToggle, tocShown, tocShown ? 'tocClose' : 'tocOpen');
     this.#ui.viewToggle.hidden = !this.#showingChildIndex;
-    const viewLabel = this.#childView === 'list' ? TEXT.viewCard : TEXT.viewList;
+    const viewLabel = this.#text(this.#childView === 'list' ? 'viewCard' : 'viewList');
     if (this.#ui.viewToggle.textContent !== viewLabel) this.#ui.viewToggle.textContent = viewLabel;
     const barHeight = `${this.#ui.toolbar.offsetHeight}px`;
     if (frame.style.getPropertyValue('--_bar-h') !== barHeight) frame.style.setProperty('--_bar-h', barHeight);
   }
 
-  /** `kind` names both the icon and the label (TEXT and ICONS share the keys). */
+  /** `kind` names both the icon and the label (the words and ICONS share the keys). */
   #setToggle(button, expanded, kind) {
     const value = String(expanded);
     if (button.getAttribute('aria-expanded') !== value) button.setAttribute('aria-expanded', value);
-    if (button.dataset.mpvIcon === kind) return;
-    button.dataset.mpvIcon = kind;
-    button.setAttribute('aria-label', TEXT[kind]);
-    button.title = TEXT[kind];
-    button.replaceChildren(ICONS[kind]());
+    if (button.dataset.mpvIcon !== kind) {
+      button.dataset.mpvIcon = kind;
+      button.replaceChildren(ICONS[kind]());
+    }
+    const label = this.#text(kind);
+    if (button.title === label) return;
+    button.setAttribute('aria-label', label);
+    button.title = label;
   }
 
   // ---- search (spec 5.4) ----
@@ -1526,7 +1577,7 @@ export class MdPagesViewerElement extends HTMLElement {
     const note = (text) => h('p', { class: 'mpv-search-empty', part: 'search-empty' }, text);
     if (found.length === 0) {
       // No "no match" before every page has been read.
-      results.replaceChildren(note(reading ? TEXT.searching : TEXT.noResults(query)));
+      results.replaceChildren(note(reading ? this.#text('searching') : this.#text('noResults', query)));
     } else {
       results.replaceChildren(
         h(
@@ -1544,7 +1595,7 @@ export class MdPagesViewerElement extends HTMLElement {
           }),
         ),
       );
-      if (reading) results.append(note(TEXT.searching));
+      if (reading) results.append(note(this.#text('searching')));
     }
     if (selectedKey !== null) {
       const index = this.#searchLinks().findIndex((link) => searchResultKey(link) === selectedKey);
@@ -1682,22 +1733,25 @@ export class MdPagesViewerElement extends HTMLElement {
 
   // ---- rendering parts ----
 
-  #showStatus(text, retry) {
+  /** `key` names the words (see texts.js); kept so they change with the language. */
+  #showStatus(key, retry) {
     this.#ui.layout.hidden = true;
     this.#ui.status.hidden = false;
-    this.#ui.statusText.textContent = text;
+    this.#ui.statusText.dataset.mpvText = key;
+    this.#ui.statusText.textContent = this.#text(key);
     this.#ui.statusRetry.hidden = !retry;
     this.#ui.statusRetry.onclick = retry || null;
   }
 
-  #showBodyStatus(text, retry) {
+  #showBodyStatus(key, retry) {
     this.#markChildIndex(false);
     this.#renderPager(null);
     this.#updateToolbar();
     this.#ui.content.hidden = true;
     this.#ui.content.replaceChildren();
     this.#ui.bodyStatus.hidden = false;
-    this.#ui.bodyStatusText.textContent = text;
+    this.#ui.bodyStatusText.dataset.mpvText = key;
+    this.#ui.bodyStatusText.textContent = this.#text(key);
     this.#ui.bodyRetry.hidden = !retry;
     this.#ui.bodyRetry.onclick = retry || null;
   }
@@ -1723,7 +1777,7 @@ export class MdPagesViewerElement extends HTMLElement {
           toggle.className = 'mpv-toggle';
           toggle.setAttribute('part', 'toggle');
           toggle.dataset.mpvToggle = id;
-          toggle.setAttribute('aria-label', `${page.title} ${TEXT.toggle}`);
+          toggle.setAttribute('aria-label', this.#text('toggle', page.title));
           toggle.setAttribute('aria-expanded', String(this.#expanded.has(id)));
           row.append(toggle);
         } else {
