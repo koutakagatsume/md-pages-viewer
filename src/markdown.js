@@ -169,6 +169,8 @@ export function renderMarkdown(markdown, resolve, { inert = false } = {}) {
     box.append(table);
   }
 
+  makeCallouts(root);
+
   for (const a of root.querySelectorAll('a, area')) {
     const link = links.get(a);
     if (!link) continue;
@@ -195,6 +197,75 @@ export function renderMarkdown(markdown, resolve, { inert = false } = {}) {
   const fragment = (inert ? root.ownerDocument : document).createDocumentFragment();
   fragment.append(...root.childNodes);
   return fragment;
+}
+
+// ---- callouts: "> [!NOTE]" and the like, written as on GitHub (spec 5.4) ----
+
+const CALLOUT_LABEL = { note: '補足', tip: 'ヒント', important: '重要', warning: '注意', caution: '警告' };
+// Line icons on a 24x24 grid, drawn with currentColor: [tag, attributes] pairs.
+const CALLOUT_ICON = {
+  note: [['circle', { cx: 12, cy: 12, r: 9 }], ['path', { d: 'M12 11v5M12 8h.01' }]],
+  tip: [['path', { d: 'M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z' }]],
+  important: [['path', { d: 'M4 5h16v11H9l-5 4z' }], ['path', { d: 'M12 8v4M12 14.5h.01' }]],
+  warning: [['path', { d: 'M12 4 2.5 20h19z' }], ['path', { d: 'M12 10v4M12 17h.01' }]],
+  caution: [['path', { d: 'M8.2 3h7.6L21 8.2v7.6L15.8 21H8.2L3 15.8V8.2z' }], ['path', { d: 'M12 8v5M12 16h.01' }]],
+};
+const SVG_NS = 'http://www.w3.org/2000/svg';
+// The marker alone on the quote's first line (any case), e.g. "[!NOTE]".
+const CALLOUT_MARKER = /^[ \t]*\[!(note|tip|important|warning|caution)\][ \t]*(?:\r?\n|$)/i;
+
+function calloutIcon(doc, type) {
+  const svg = doc.createElementNS(SVG_NS, 'svg');
+  for (const [name, value] of Object.entries({ viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', 'stroke-width': 2, 'stroke-linecap': 'round', 'stroke-linejoin': 'round', 'aria-hidden': 'true', focusable: 'false' })) {
+    svg.setAttribute(name, String(value));
+  }
+  for (const [tag, attributes] of CALLOUT_ICON[type]) {
+    const shape = doc.createElementNS(SVG_NS, tag);
+    for (const [name, value] of Object.entries(attributes)) shape.setAttribute(name, String(value));
+    svg.append(shape);
+  }
+  return svg;
+}
+
+/**
+ * A quote whose first line is only "[!NOTE]", "[!TIP]", "[!IMPORTANT]",
+ * "[!WARNING]" or "[!CAUTION]" becomes a box with a heading of its kind; the
+ * marker itself is taken out. Anything else (an unknown kind, more text on
+ * the marker's line, a quote inside a quote) stays a quote. Run after
+ * sanitizing: the box and its heading are ours.
+ */
+function makeCallouts(root) {
+  const doc = root.ownerDocument;
+  for (const quote of root.querySelectorAll('blockquote')) {
+    if (quote.parentElement && quote.parentElement.closest('blockquote')) continue;
+    const first = quote.firstElementChild;
+    const text = first && first.localName === 'p' ? first.firstChild : null;
+    if (!text || text.nodeType !== 3) continue;
+    const match = CALLOUT_MARKER.exec(text.data);
+    if (!match) continue;
+    // "[!NOTE]  " with a hard break: the marker's line ends at the <br>.
+    const rest = text.data.slice(match[0].length);
+    if (rest === '' && text.nextSibling && text.nextSibling.nodeType === 1 && text.nextSibling.localName !== 'br' && !/\n$/.test(match[0])) continue;
+    const type = match[1].toLowerCase();
+    if (rest === '') {
+      const next = text.nextSibling;
+      text.remove();
+      if (next && next.nodeType === 1 && next.localName === 'br') next.remove();
+    } else {
+      text.data = rest;
+    }
+    if (first.textContent.trim() === '' && !first.querySelector('img, svg, video, audio, iframe, object, picture')) first.remove();
+
+    const box = doc.createElement('div');
+    box.className = `mpv-callout mpv-callout-${type}`;
+    box.setAttribute('part', `callout ${type}`);
+    const title = doc.createElement('p');
+    title.className = 'mpv-callout-title';
+    title.setAttribute('part', 'callout-title');
+    title.append(calloutIcon(doc, type), CALLOUT_LABEL[type]);
+    box.append(title, ...quote.childNodes);
+    quote.replaceWith(box);
+  }
 }
 
 /**

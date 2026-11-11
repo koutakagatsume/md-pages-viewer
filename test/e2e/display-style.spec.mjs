@@ -354,6 +354,68 @@ const linesOf = (viewer, selector, text) =>
     [selector, text],
   );
 
+test('[表示/注意・ヒントの囲み] 引用の1行目が [!NOTE] などだけなら、種類の見出しが付いた色付きの枠になる。それ以外の引用はそのまま', async ({ page }) => {
+  const md = [
+    '# 囲み',
+    '> [!NOTE]\n> 補足の本文',
+    '> [!tip]\n>\n> ヒントの段落\n>\n> - 項目1\n> - 項目2',
+    '> [!IMPORTANT]\n> 重要の本文と [リンク](?page=other)',
+    '> [!Warning]  \n> 改行のあとの本文',
+    '> [!CAUTION]\n> 警告の本文',
+    '> [!WARNING] 同じ行に文がある',
+    '> [!FOO]\n> 知らない種類',
+    '> **[!NOTE]**\n> 太字の印',
+    '> ふつうの引用',
+    '> > [!NOTE]\n> > 引用の中の印',
+    '- リストの項目\n\n  > [!IMPORTANT]\n  > リストの中の囲み',
+  ].join('\n\n');
+  await page.goto(BLANK);
+  const viewer = await mount(page, { options: { pages: [{ id: 'c', parentId: null, title: '囲み', md }, { id: 'other', parentId: null, title: 'その他', md: '# その他' }] } });
+  await expect(h1(viewer)).toHaveText('囲み');
+
+  const boxes = await viewer.evaluate((el) =>
+    [...el.shadowRoot.querySelectorAll('.mpv-content .mpv-callout')].map((box) => ({
+      part: box.getAttribute('part'),
+      title: box.querySelector(':scope > [part~="callout-title"]').textContent,
+      icon: box.querySelector(':scope > [part~="callout-title"] svg')?.getAttribute('aria-hidden'),
+      text: [...box.children].slice(1).map((c) => c.textContent.trim()).join(' / '),
+    })),
+  );
+  expect(boxes).toEqual([
+    { part: 'callout note', title: '補足', icon: 'true', text: '補足の本文' },
+    { part: 'callout tip', title: 'ヒント', icon: 'true', text: 'ヒントの段落 / 項目1\n項目2' },
+    { part: 'callout important', title: '重要', icon: 'true', text: '重要の本文と リンク' },
+    { part: 'callout warning', title: '注意', icon: 'true', text: '改行のあとの本文' },
+    { part: 'callout caution', title: '警告', icon: 'true', text: '警告の本文' },
+    { part: 'callout important', title: '重要', icon: 'true', text: 'リストの中の囲み' },
+  ]);
+
+  // 印の行にほかの文がある・知らない種類・太字の印・引用の中の印は、印も文字のまま引用で出る
+  const quotes = await viewer.evaluate((el) => [...el.shadowRoot.querySelectorAll('.mpv-content blockquote')].map((q) => q.textContent.replace(/\s+/g, ' ').trim()));
+  expect(quotes).toEqual(['[!WARNING] 同じ行に文がある', '[!FOO] 知らない種類', '[!NOTE] 太字の印', 'ふつうの引用', '[!NOTE] 引用の中の印', '[!NOTE] 引用の中の印']);
+
+  // 囲みの中のリンクも、ほかのリンクと同じく動く
+  await content(viewer).getByRole('link', { name: 'リンク' }).click();
+  await expect(h1(viewer)).toHaveText('その他');
+  await viewer.evaluate((el) => (el.currentId = 'c'));
+  await expect(h1(viewer)).toHaveText('囲み');
+
+  // 色：初期値と、CSS 変数で変えた色（枠の線・見出し）
+  const colors = () =>
+    viewer.evaluate((el) =>
+      [...el.shadowRoot.querySelectorAll('.mpv-content .mpv-callout')].slice(0, 5).map((box) => {
+        const line = getComputedStyle(box).borderLeftColor;
+        return line === getComputedStyle(box.querySelector('.mpv-callout-title')).color ? line : `${line} != title`;
+      }),
+    );
+  expect(await colors()).toEqual(['rgb(37, 99, 235)', 'rgb(22, 163, 74)', 'rgb(124, 58, 237)', 'rgb(180, 83, 9)', 'rgb(220, 38, 38)']);
+  await viewer.evaluate((el) => {
+    el.style.setProperty('--mpv-color-note', 'rgb(1, 2, 3)');
+    el.style.setProperty('--mpv-color-caution', 'rgb(4, 5, 6)');
+  });
+  expect(await colors()).toEqual(['rgb(1, 2, 3)', 'rgb(22, 163, 74)', 'rgb(124, 58, 237)', 'rgb(180, 83, 9)', 'rgb(4, 5, 6)']);
+});
+
 test('[表示/日本語の折り返し] 組み込み先の lang を表示の中に引き継ぎ、見出し・表のセル・ページ一覧などは文節の切れ目で折り返す。本文の段落は今のまま', async ({ page }) => {
   await page.goto(BLANK); // <html lang="ja">
   const md = [

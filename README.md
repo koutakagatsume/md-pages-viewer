@@ -163,6 +163,38 @@ viewer.element.currentId = 'faq';
 | そのほかの相対パス | `src` または `baseUrl` を基準に解決した URL へ移動する |
 | 組み込み先とオリジンが異なる URL | 新しいタブで開く |
 
+## 注意・ヒントの囲み
+
+引用（`>`）の1行目に種類を書くと、その引用が色付きの枠になります。書き方は GitHub の Markdown と同じです。
+
+```markdown
+> [!WARNING]
+> 1枠の長さを変えても、すでに入っている予約はそのまま残ります。
+```
+
+| 書き方 | 見出し | 色の CSS 変数（初期値） |
+| --- | --- | --- |
+| `[!NOTE]` | 補足 | `--mpv-color-note`（`#2563eb`） |
+| `[!TIP]` | ヒント | `--mpv-color-tip`（`#16a34a`） |
+| `[!IMPORTANT]` | 重要 | `--mpv-color-important`（`#7c3aed`） |
+| `[!WARNING]` | 注意 | `--mpv-color-warning`（`#b45309`） |
+| `[!CAUTION]` | 警告 | `--mpv-color-caution`（`#dc2626`） |
+
+- 種類は大文字・小文字のどちらでも書けます。印（`[!NOTE]` など）の行には、ほかの文字を書きません
+- 2行目からは、段落・箇条書き・表・リンクなど、ふつうの Markdown が書けます
+- 知らない種類や、印の行にほかの文字がある場合は、ふつうの引用のまま表示します
+- 色の初期値は白い背景で読みやすい色です。組み込み先の画面がダークのときは、明るめの色を指定してください
+
+```css
+[data-theme='dark'] md-pages-viewer {
+  --mpv-color-note: #60a5fa;
+  --mpv-color-tip: #4ade80;
+  --mpv-color-important: #a78bfa;
+  --mpv-color-warning: #fbbf24;
+  --mpv-color-caution: #f87171;
+}
+```
+
 ## URL への反映
 
 ページを切り替えると、組み込み先の URL のクエリ `page` が切り替え先の ID になり、履歴に追加されます。ブラウザの戻る・進むとリンクの共有がそのまま使えます。ほかのクエリは書かれたまま残ります。
@@ -183,6 +215,7 @@ viewer.element.currentId = 'faq';
 | `--mpv-color-border` | 区切り線の色 |
 | `--mpv-sidebar-width` | サイドバーの幅 |
 | `--mpv-spacing` | 余白の基準の大きさ |
+| `--mpv-color-note` ほか4つ | 注意・ヒントの囲みの色（下の「注意・ヒントの囲み」を参照） |
 
 ```css
 md-pages-viewer {
@@ -224,6 +257,8 @@ md-pages-viewer {
 | `child-title` | 子ページの名前 |
 | `child-description` | 子ページの説明文 |
 | `child-meta` | 子ページの章の数・子ページの数 |
+| `callout` | 本文の注意・ヒントの囲み。`note`・`tip`・`important`・`warning`・`caution` も付きます |
+| `callout-title` | 注意・ヒントの囲みの見出し |
 | `pager` | 本文の最後の前後のページ |
 | `pager-link` | 前後のページの各リンク。前は `previous`、次は `next` も付きます |
 | `status` | 読み込み中・エラーの表示 |

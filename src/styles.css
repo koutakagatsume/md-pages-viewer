@@ -1062,6 +1062,53 @@
   color: var(--_muted);
 }
 
+/* Callouts ("> [!NOTE]" etc., spec 5.4): a coloured bar on the left, the
+   colour faint behind, and a heading of the kind in that colour. Each colour
+   can be set by the host; the defaults read well on a white page. */
+.mpv-content .mpv-callout {
+  --_callout: var(--mpv-color-note, #2563eb);
+  margin: 0 0 1em;
+  padding: 0.75em 1em;
+  border-left: 4px solid var(--_callout);
+  border-radius: 0 8px 8px 0;
+  background: color-mix(in srgb, var(--_callout) 8%, transparent);
+}
+
+.mpv-content .mpv-callout-tip {
+  --_callout: var(--mpv-color-tip, #16a34a);
+}
+
+.mpv-content .mpv-callout-important {
+  --_callout: var(--mpv-color-important, #7c3aed);
+}
+
+.mpv-content .mpv-callout-warning {
+  --_callout: var(--mpv-color-warning, #b45309);
+}
+
+.mpv-content .mpv-callout-caution {
+  --_callout: var(--mpv-color-caution, #dc2626);
+}
+
+.mpv-content .mpv-callout > :last-child {
+  margin-bottom: 0;
+}
+
+.mpv-content .mpv-callout-title {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  margin: 0 0 0.35em;
+  font-weight: 700;
+  color: var(--_callout);
+}
+
+.mpv-content .mpv-callout-title svg {
+  flex: none;
+  width: 1.1em;
+  height: 1.1em;
+}
+
 .mpv-content code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.875em;
