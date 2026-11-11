@@ -342,6 +342,102 @@ test('[表示/本文の書き方] 表・取り消し線・タスクリスト・�
   await expect(www).toHaveAttribute('href', /www\.example\.org/);
 });
 
+/** How many lines the text of the first element matching `selector` in the body (or shadow root) takes. */
+const linesOf = (viewer, selector, text) =>
+  viewer.evaluate(
+    (el, [selector, text]) => {
+      const target = [...el.shadowRoot.querySelectorAll(selector)].find((n) => n.textContent.trim() === text);
+      const range = document.createRange();
+      range.selectNodeContents(target);
+      return new Set([...range.getClientRects()].filter((r) => r.width > 0).map((r) => Math.round(r.top))).size;
+    },
+    [selector, text],
+  );
+
+test('[表示/日本語の折り返し] 組み込み先の lang を表示の中に引き継ぎ、見出し・表のセル・ページ一覧などは文節の切れ目で折り返す。本文の段落は今のまま', async ({ page }) => {
+  await page.goto(BLANK); // <html lang="ja">
+  const md = [
+    '# 店舗の登録',
+    '店舗を追加し、営業時間や予約の受付を設定します。',
+    '## 店舗を追加する',
+    '| 項目 | 必須 | 内容 |\n| --- | --- | --- |\n| 店舗コード | 必須 | 書き出しや連携で店舗を見分ける番号（半角英数字8文字まで） |\n| メールアドレス | 任意 | 予約の控えを送るときの送り主になります |',
+  ].join('\n\n');
+  const viewer = await mount(page, {
+    options: { pages: [{ id: 'store', parentId: null, title: '店舗の登録', md }, { id: 'other', parentId: null, title: 'その他', md: '# その他' }] },
+    style: 'width: 360px',
+  });
+  await expect(h1(viewer)).toHaveText('店舗の登録');
+
+  // 言語：組み込み先の lang="ja" が、表示の中（スタイルを初期値に戻した要素の内側）に入る
+  const langs = () => viewer.evaluate((el) => [...el.shadowRoot.querySelectorAll('.mpv-layout, .mpv-status')].map((n) => n.getAttribute('lang')));
+  expect(await langs()).toEqual(['ja', 'ja']);
+
+  // 狭い表でも、短い言葉は途中で折れない（「必／須」「店舗コー／ド」にならない）
+  expect(await linesOf(viewer, '.mpv-content td', '必須')).toBe(1);
+  expect(await linesOf(viewer, '.mpv-content td', '店舗コード')).toBe(1);
+  expect(await linesOf(viewer, '.mpv-content td', 'メールアドレス')).toBe(1);
+
+  // 文節で折り返すのは見出し・表のセル・ページ一覧の名前など。本文の段落は今のまま
+  const wordBreak = (selector) => viewer.evaluate((el, s) => getComputedStyle(el.shadowRoot.querySelector(s)).wordBreak, selector);
+  for (const selector of ['.mpv-content h2', '.mpv-content th', '.mpv-content td', '.mpv-node-link']) expect(await wordBreak(selector), selector).toBe('auto-phrase');
+  expect(await wordBreak('.mpv-content p')).toBe('normal');
+
+  // 組み込み先の言語が変わると、次のページの表示で入れ替わる。言語の指定がなければ入れない
+  await page.evaluate(() => (document.documentElement.lang = 'en'));
+  await viewer.evaluate((el) => (el.currentId = 'other'));
+  await expect(h1(viewer)).toHaveText('その他');
+  expect(await langs()).toEqual(['en', 'en']);
+  await page.evaluate(() => document.documentElement.removeAttribute('lang'));
+  await viewer.evaluate((el) => (el.currentId = 'store'));
+  await expect(h1(viewer)).toHaveText('店舗の登録');
+  expect(await langs()).toEqual([null, null]);
+
+  // 要素に近い祖先の lang を使う（Shadow DOM の外側をたどる）
+  await page.evaluate(() => {
+    const holder = document.createElement('div');
+    holder.lang = 'ja';
+    const inner = holder.attachShadow({ mode: 'open' });
+    const el = document.createElement('md-pages-viewer');
+    el.pages = [{ id: 'x', parentId: null, title: 'X', md: '# X' }];
+    inner.append(el);
+    document.body.append(holder);
+    window.__nested = el;
+  });
+  await expect.poll(() => page.evaluate(() => window.__nested.shadowRoot.querySelector('.mpv-layout')?.getAttribute('lang') ?? 'none')).toBe('ja');
+});
+
+test('[表示/本文の書き方] 幅に収まらない表は、本文全体ではなく表の中だけが横にスクロールする。表は表のまま', async ({ page }) => {
+  await page.goto(BLANK);
+  const wide = Array.from({ length: 6 }, (_, i) => `long_identifier_without_spaces_${i}`);
+  const md = [
+    '# 表',
+    `| ${wide.join(' | ')} |\n| ${wide.map(() => '---').join(' | ')} |\n| ${wide.join(' | ')} |`,
+    '| 項目 | 内容 |\n| --- | --- |\n| 短い | 収まる表 |',
+    'この段落は折り返して表示される。'.repeat(10),
+  ].join('\n\n');
+  const viewer = await mount(page, { options: { pages: [{ id: 't', parentId: null, title: '表', md }] }, style: 'width: 600px' });
+  await expect(h1(viewer)).toHaveText('表');
+
+  const state = await viewer.evaluate((el) => {
+    const s = el.shadowRoot;
+    const content = s.querySelector('.mpv-content');
+    return {
+      boxes: [...s.querySelectorAll('.mpv-content .mpv-table-scroll')].map((box) => ({
+        holdsTable: box.firstElementChild?.localName === 'table',
+        scrolls: box.scrollWidth > box.clientWidth + 1,
+        display: getComputedStyle(box.firstElementChild).display,
+      })),
+      bodyScrolls: content.scrollWidth > content.clientWidth + 1,
+    };
+  });
+  expect(state.boxes).toEqual([
+    { holdsTable: true, scrolls: true, display: 'table' },
+    { holdsTable: true, scrolls: false, display: 'table' },
+  ]);
+  expect(state.bodyScrolls).toBe(false);
+  await expect(content(viewer).getByRole('table')).toHaveCount(2);
+});
+
 test('[表示/存在しないページ] 存在しないIDの ?page=・currentId で「ページが見つかりません」が出る', async ({ page }) => {
   const expectNotFound = async (viewer) => {
     await expect(bodyStatus(viewer)).toBeVisible();

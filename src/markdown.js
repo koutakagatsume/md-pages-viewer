@@ -158,6 +158,17 @@ export function renderMarkdown(markdown, resolve, { inert = false } = {}) {
     FORBID_ATTR: ['part', 'exportparts', 'poster', 'background'],
   });
 
+  // A table wider than the body scrolls sideways in a box of its own, not
+  // the whole body (spec 5.4). Added after sanitizing, so the class is ours;
+  // the table itself stays a table (its role is kept for screen readers).
+  for (const table of root.querySelectorAll('table')) {
+    if (table.parentElement.closest('table')) continue;
+    const box = root.ownerDocument.createElement('div');
+    box.className = 'mpv-table-scroll';
+    table.replaceWith(box);
+    box.append(table);
+  }
+
   for (const a of root.querySelectorAll('a, area')) {
     const link = links.get(a);
     if (!link) continue;

@@ -519,6 +519,7 @@ export class MdPagesViewerElement extends HTMLElement {
     window.addEventListener('resize', this.#onWindowResize);
     this.shadowRoot.addEventListener('scroll', this.#onSpyScroll, { capture: true, passive: true });
     document.addEventListener('scroll', this.#onSpyScroll, { capture: true, passive: true });
+    this.#updateLanguage();
     this.#updateHeightMode();
     this.#updateFollow();
     if (this.#pending.size > 0 || !this.#initialized) this.#schedule();
@@ -790,6 +791,7 @@ export class MdPagesViewerElement extends HTMLElement {
   #show(target, how) {
     const nav = ++this.#navToken;
     this.#displayed = target;
+    this.#updateLanguage();
     this.#closeSidebar();
 
     // No pages: nothing in the toolbar or the sidebar can be used.
@@ -1198,6 +1200,28 @@ export class MdPagesViewerElement extends HTMLElement {
 
   #updateHeightMode() {
     this.#ui.frame.dataset.height = this.#hostHasHeight() ? 'fixed' : 'auto';
+  }
+
+  /**
+   * The host page's language inside our area (spec 6). .mpv resets every
+   * inherited style (all: initial), and with it the language the browser
+   * takes from lang attributes, so rules that depend on it (Japanese line
+   * breaking by phrase) would not apply. The nearest lang at or above the
+   * element (across shadow roots) is set again on the parts inside .mpv;
+   * with none anywhere, none is set. Read when connected and on each page.
+   */
+  #updateLanguage() {
+    let lang = null;
+    for (let node = this; node; node = parentOf(node)) {
+      if (node.hasAttribute('lang')) {
+        lang = node.getAttribute('lang');
+        break;
+      }
+    }
+    for (const part of [this.#ui.status, this.#ui.layout]) {
+      if (lang === null) part.removeAttribute('lang');
+      else if (part.getAttribute('lang') !== lang) part.setAttribute('lang', lang);
+    }
   }
 
   // position:sticky works against the nearest ancestor that is a scroll

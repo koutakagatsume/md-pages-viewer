@@ -1088,6 +1088,34 @@
   border-collapse: collapse;
 }
 
+/* A table wider than the body scrolls sideways inside this box (spec 5.4). */
+.mpv-content .mpv-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0 0 1em;
+}
+
+.mpv-content .mpv-table-scroll > table {
+  margin: 0;
+}
+
+/* Japanese line breaking (spec 6): headings, table cells and the names in
+   the lists around the body break between phrases, not inside a word
+   ("必須" stays whole, a long cell breaks after "番号"). It needs the page's
+   language, which the element carries inside (lang on .mpv-layout).
+   Browsers without auto-phrase, or other languages, break as before.
+   Running text keeps the usual breaking: by phrase, paragraphs get ragged. */
+.mpv-content :is(h1, h2, h3, h4, h5, h6, th, td),
+.mpv-node-link,
+.mpv-toc-list a,
+.mpv-child-title,
+.mpv-child-description,
+.mpv-pager-title,
+.mpv-search-page,
+.mpv-search-heading {
+  word-break: auto-phrase;
+}
+
 .mpv-content th,
 .mpv-content td {
   border: 1px solid var(--_border);
