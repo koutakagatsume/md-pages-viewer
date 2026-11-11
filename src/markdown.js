@@ -185,3 +185,20 @@ export function renderMarkdown(markdown, resolve, { inert = false } = {}) {
   fragment.append(...root.childNodes);
   return fragment;
 }
+
+/**
+ * An image URL as the body's sanitizing would keep it on an <img src>, or ''
+ * when it would be dropped (e.g. javascript:). For images we place ourselves
+ * (card thumbnails), so they follow the same rules as images in a body. The
+ * check runs in a document without a browsing context: nothing loads.
+ * @param {string} url
+ */
+export function safeImageUrl(url) {
+  const doc = document.implementation.createHTMLDocument('');
+  const root = doc.createElement('div');
+  const img = doc.createElement('img');
+  img.setAttribute('src', url);
+  root.append(img);
+  purify.sanitize(root, { IN_PLACE: true, TRUSTED_TYPES_POLICY: null });
+  return img.getAttribute('src') ?? '';
+}

@@ -4,7 +4,7 @@
 import css from './styles.css';
 import { buildModel, resolveInitialPage } from './pages.js';
 import { classifyLink, decodeFragment, headingId, pageUrl, resolveImage } from './paths.js';
-import { renderMarkdown } from './markdown.js';
+import { renderMarkdown, safeImageUrl } from './markdown.js';
 
 export const TAG = 'md-pages-viewer';
 
@@ -976,6 +976,8 @@ export class MdPagesViewerElement extends HTMLElement {
       );
       if (child.description !== null) link.append(h('span', { class: 'mpv-child-description', part: 'child-description' }, child.description));
       link.append(h('span', { class: 'mpv-child-meta', part: 'child-meta' }, meta));
+      const thumbnail = this.#childView === 'card' ? this.#thumbnailOf(child) : null;
+      if (thumbnail) link.prepend(thumbnail);
       return h('li', { class: 'mpv-child' }, link);
     });
     const fragment = document.createDocumentFragment();
@@ -993,6 +995,35 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#markChildIndex(true);
     this.#putBody(fragment, how);
     this.#renderPager(page);
+  }
+
+  /**
+   * The image on a page's card (spec 5.4): its `thumbnail`, resolved like an
+   * image in that page's body (imageResolver, or src/baseUrl, spec 5.3) and
+   * kept only if the body's sanitizing would keep it. Made only for cards,
+   * so the table never calls imageResolver for it. Loaded when it comes into
+   * view; one that fails to load is taken away and the card shows as without.
+   */
+  #thumbnailOf(page) {
+    if (page.thumbnail === null) return null;
+    let src = '';
+    try {
+      src = resolveImage(page.thumbnail, page, {
+        baseUrl: this.#options.baseUrl,
+        documentUrl: document.baseURI,
+        pageUrl: location.href,
+        imageResolver: this.#options.imageResolver,
+      });
+    } catch (error) {
+      warn(`imageResolver failed for "${page.thumbnail}": ${error.message}`);
+      return null;
+    }
+    src = src && safeImageUrl(src);
+    if (!src) return null;
+    // loading is set before src, so the image waits until it is in view.
+    const img = h('img', { class: 'mpv-child-thumbnail', part: 'child-thumbnail', alt: '', loading: 'lazy', decoding: 'async', src });
+    img.addEventListener('error', () => img.remove(), { once: true });
+    return img;
   }
 
   /** Whether the body is a child index; the body gets data-index="list" or "card" for the CSS. */

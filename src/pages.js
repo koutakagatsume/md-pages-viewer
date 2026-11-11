@@ -9,7 +9,7 @@ const isMissing = (v) => v === undefined || v === null;
  */
 export function buildModel(input, warn = () => {}) {
   // md and src both null: the page has no body; it shows its child pages (spec 5.4).
-  /** @type {Map<string, {id: string, parentId: string|null, title: string, description: string|null, md: string|null, src: string|null, order: number|null, index: number, raw: object}>} */
+  /** @type {Map<string, {id: string, parentId: string|null, title: string, description: string|null, thumbnail: string|null, md: string|null, src: string|null, order: number|null, index: number, raw: object}>} */
   const byId = new Map();
   const list = Array.isArray(input) ? input : [];
 
@@ -37,6 +37,8 @@ export function buildModel(input, warn = () => {}) {
       parentId: isMissing(raw.parentId) ? null : String(raw.parentId),
       title: String(raw.title),
       description: isMissing(raw.description) || String(raw.description).trim() === '' ? null : String(raw.description).trim(),
+      // The image on the page's card in a child index (spec 5.4), a path or URL.
+      thumbnail: isMissing(raw.thumbnail) || String(raw.thumbnail).trim() === '' ? null : String(raw.thumbnail).trim(),
       md,
       src,
       order: typeof raw.order === 'number' && Number.isFinite(raw.order) ? raw.order : null,

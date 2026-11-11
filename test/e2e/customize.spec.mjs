@@ -205,6 +205,87 @@ test('[表示/子ページ一覧] ツールバーのボタンで表とカード�
   expect((await urlState(page, 'doc')).param).toBe('b');
 });
 
+const THUMB_PAGES = [
+  { id: 'cat', parentId: null, title: 'カテゴリ' },
+  { id: 'abs', parentId: 'cat', title: '絶対パス', order: 1, md: '# 絶対パス', thumbnail: '/mock/thumb/one.svg' },
+  { id: 'remote', parentId: 'cat', title: 'src のページ', order: 2, src: '/mock/thumb/docs/remote.md', thumbnail: 'images/two.svg' },
+  { id: 'base', parentId: 'cat', title: 'baseUrl 基準', order: 3, md: '# baseUrl 基準', thumbnail: 'img/three.svg' },
+  { id: 'none', parentId: 'cat', title: 'サムネイルなし', order: 4, md: '# サムネイルなし' },
+  { id: 'broken', parentId: 'cat', title: '読み込めない', order: 5, md: '# 読み込めない', thumbnail: '/mock/thumb/missing.svg' },
+  { id: 'script', parentId: 'cat', title: 'スクリプト', order: 6, md: '# スクリプト', thumbnail: 'javascript:alert(1)' },
+  { id: 'sub', parentId: 'cat', title: '下のカテゴリ', order: 7, thumbnail: '/mock/thumb/sub.svg' },
+  { id: 'sub1', parentId: 'sub', title: '下の1', md: '# 下の1' },
+];
+const SVG = '<svg xmlns="http://www.w3.org/2000/svg" width="320" height="240"><rect width="320" height="240" fill="#2563eb"/></svg>';
+const thumbnail = (viewer, title) => card(viewer, title).locator('[part~="child-thumbnail"]');
+
+test('[表示/子ページ一覧] カードの形では、thumbnail を指定した子ページのカードの上に画像が出る。表の形では出さず、読み込まない。読み込めない画像と使えない URL は出さない', async ({ page }) => {
+  const requested = [];
+  await page.route('**/mock/thumb/**', (route) => {
+    const path = new URL(route.request().url()).pathname;
+    requested.push(path);
+    if (path.endsWith('.md')) return route.fulfill({ contentType: 'text/markdown', body: '# src のページ' });
+    if (path.includes('missing')) return route.fulfill({ status: 404, body: 'not found' });
+    return route.fulfill({ contentType: 'image/svg+xml', body: SVG });
+  });
+  await page.goto(BLANK);
+  const viewer = await mount(page, { options: { pages: THUMB_PAGES, baseUrl: '/mock/thumb/base/' } });
+  await expect(cardTitles(viewer)).toHaveCount(7);
+
+  // 表の形：画像を出さず、読み込みもしない
+  await expect(part(viewer, 'child-thumbnail')).toHaveCount(0);
+  await page.waitForTimeout(300);
+  expect(requested).toEqual([]);
+
+  // カードの形：本文の画像と同じ規則で解決した画像が、カードの上に出る
+  await part(viewer, 'view-toggle').click();
+  await expect(thumbnail(viewer, '絶対パス')).toHaveAttribute('src', /\/mock\/thumb\/one\.svg$/);
+  await expect(thumbnail(viewer, 'src のページ')).toHaveAttribute('src', /\/mock\/thumb\/docs\/images\/two\.svg$/);
+  await expect(thumbnail(viewer, 'baseUrl 基準')).toHaveAttribute('src', /\/mock\/thumb\/base\/img\/three\.svg$/);
+  await expect(thumbnail(viewer, '下のカテゴリ')).toHaveAttribute('src', /\/mock\/thumb\/sub\.svg$/);
+  await expect(thumbnail(viewer, '絶対パス')).toHaveAttribute('alt', '');
+  await expect(thumbnail(viewer, '絶対パス')).toHaveAttribute('loading', 'lazy');
+  // 指定のないページ、使えない URL（javascript:）、読み込めない画像は、画像なしのカード
+  await expect(thumbnail(viewer, 'サムネイルなし')).toHaveCount(0);
+  await expect(thumbnail(viewer, 'スクリプト')).toHaveCount(0);
+  await expect(thumbnail(viewer, '読み込めない')).toHaveCount(0);
+  await expect(part(viewer, 'child-thumbnail')).toHaveCount(4);
+  expect(requested.filter((p) => p.endsWith('.md'))).toEqual([]);
+
+  // カードの上端いっぱいに 16:9 で出て、その下に名前が続く
+  const box = await card(viewer, '絶対パス').evaluate((el) => {
+    const r = (n) => n.getBoundingClientRect();
+    const img = el.querySelector('.mpv-child-thumbnail');
+    return { card: r(el).toJSON(), img: r(img).toJSON(), title: r(el.querySelector('.mpv-child-title')).toJSON(), loaded: img.naturalWidth };
+  });
+  expect(box.img.top).toBeCloseTo(box.card.top + 1, 0);
+  expect(box.img.left).toBeCloseTo(box.card.left + 1, 0);
+  expect(box.img.width).toBeCloseTo(box.card.width - 2, 0);
+  expect(box.img.height).toBeCloseTo((box.img.width * 9) / 16, 0);
+  expect(box.title.top).toBeGreaterThan(box.img.bottom);
+  expect(box.loaded).toBeGreaterThan(0);
+
+  // 表の形に戻すと画像は消える
+  await part(viewer, 'view-toggle').click();
+  await expect(part(viewer, 'child-thumbnail')).toHaveCount(0);
+});
+
+test('[表示/子ページ一覧] imageResolver があればサムネイルもそれで解決する。呼ぶのはカードの形のときだけで、書いたままのパスとそのページのデータを渡す', async ({ page }) => {
+  await page.route('**/mock/thumb/**', (route) => route.fulfill({ contentType: 'image/svg+xml', body: SVG }));
+  await page.goto(BLANK);
+  const viewer = await mount(page, {
+    options: { pages: THUMB_PAGES.filter((p) => ['cat', 'abs', 'remote', 'none'].includes(p.id)) },
+    functions: { imageResolver: '(path, page) => { (window.resolved ||= []).push(`${page.id}:${path}`); return `/mock/thumb/resolved/${page.id}.svg`; }' },
+  });
+  await expect(cardTitles(viewer)).toHaveCount(3);
+  expect(await page.evaluate(() => window.resolved)).toBeUndefined();
+
+  await part(viewer, 'view-toggle').click();
+  await expect(thumbnail(viewer, '絶対パス')).toHaveAttribute('src', /\/mock\/thumb\/resolved\/abs\.svg$/);
+  await expect(thumbnail(viewer, 'src のページ')).toHaveAttribute('src', /\/mock\/thumb\/resolved\/remote\.svg$/);
+  expect(await page.evaluate(() => window.resolved)).toEqual(['abs:/mock/thumb/one.svg', 'remote:images/two.svg']);
+});
+
 // ======================================================================
 // スタイル/part
 // ======================================================================

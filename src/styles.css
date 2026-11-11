@@ -932,6 +932,22 @@
   font-size: 1.05em;
 }
 
+/* The page's thumbnail across the top of its card, cut to 16:9 so the cards
+   line up whatever the image's shape. It runs to the card's edges over the
+   padding; the corners follow the card's (12px less its 1px border). */
+.mpv-content[data-index='card'] .mpv-child-thumbnail {
+  display: block;
+  width: calc(100% + var(--_space) * 2.2);
+  max-width: none;
+  aspect-ratio: 16 / 9;
+  height: auto;
+  margin: calc(var(--_space) * -1) calc(var(--_space) * -1.1) 0.25em;
+  object-fit: cover;
+  border-bottom: 1px solid var(--_border);
+  border-radius: 11px 11px 0 0;
+  background: var(--_tint);
+}
+
 .mpv-content[data-index='card'] .mpv-child-description {
   -webkit-line-clamp: 3;
 }

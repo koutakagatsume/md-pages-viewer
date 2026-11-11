@@ -127,3 +127,18 @@ test('initial page: URL first, then currentId, then the first top-level page', (
   assert.deepEqual(resolveInitialPage(model, { currentId: 'zzz' }), { kind: 'missing', id: 'zzz' });
   assert.deepEqual(resolveInitialPage(buildModel([]), { currentId: 'a' }), { kind: 'empty' });
 });
+
+test('thumbnail is kept as a trimmed string; missing, null or blank gives null', () => {
+  const model = buildModel([
+    { id: 'a', parentId: null, title: 'A', md: '', thumbnail: '  images/a.png  ' },
+    { id: 'b', parentId: null, title: 'B', md: '' },
+    { id: 'c', parentId: null, title: 'C', md: '', thumbnail: null },
+    { id: 'd', parentId: null, title: 'D', md: '', thumbnail: '   ' },
+    { id: 'e', parentId: null, title: 'E', md: '', thumbnail: 42 },
+  ]);
+  assert.equal(model.get('a').thumbnail, 'images/a.png');
+  assert.equal(model.get('b').thumbnail, null);
+  assert.equal(model.get('c').thumbnail, null);
+  assert.equal(model.get('d').thumbnail, null);
+  assert.equal(model.get('e').thumbnail, '42');
+});
