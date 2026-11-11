@@ -199,7 +199,7 @@ viewer.element.currentId = 'faq';
 
 ## 画面の言語と文言
 
-ボタンや検索欄などの文言の言語は、`locale` で選べます。日本語（`ja`、初期値）・英語（`en`）・中国語の簡体字（`zh-CN`）・繁体字（`zh-TW`）・韓国語（`ko`）が入っています。
+ボタンや検索欄などの文言の言語は、`locale` で選べます。日本語（`ja`、初期値）・英語（`en`）・中国語の簡体字（`zh-CN`）・繁体字（`zh-TW`）・韓国語（`ko`）が入っています。`locale` を指定するだけで、ボタンなどの文言はすべてその言語のものになります。`texts` は、変えたい文言があるときだけ使います。
 
 ```html
 <md-pages-viewer pages="/api/manual/pages" locale="en"></md-pages-viewer>
