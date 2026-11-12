@@ -2,7 +2,7 @@
 // 期待値は仕様書 5.4・6 の記述から決めている。
 
 import { test, expect } from '@playwright/test';
-import { BLANK, SAMPLE, mount, content, toc, sidebarLink, urlState } from './helpers.mjs';
+import { BLANK, SAMPLE, mount, content, toc, sidebarLink, urlState, scrolledTop } from './helpers.mjs';
 
 const h1 = (viewer) => content(viewer).locator('h1');
 const part = (viewer, name) => viewer.locator(`[part~="${name}"]`);
@@ -143,11 +143,122 @@ test('[表示/今の章] それ以上スクロールできず見出しが上端�
   await expect(h1(viewer)).toHaveText('終わりが短いページ');
   await toc(viewer).locator('a', { hasText: /^S$/ }).click();
   await expect.poll(async () => (await tocState(viewer)).current).toEqual(['S']);
-  expect(await page.evaluate(() => window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2)).toBe(true);
+  // 目次からはなめらかにスクロールする。いちばん下に着いた後も S のまま
+  await expect.poll(() => page.evaluate(() => window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 2)).toBe(true);
+  await page.waitForTimeout(400);
+  expect((await tocState(viewer)).current).toEqual(['S']);
 
   // 上へスクロールすると、上端の線で決まる読んでいる見出しに戻る
   await page.evaluate(() => window.scrollBy(0, -300));
   await expect.poll(async () => (await tocState(viewer)).current).toEqual(['L']);
+});
+
+/**
+ * Clicks the entry `text` of the table of contents (`list`: the column or the
+ * folded one) and, frame by frame for `frames` frames, records where the
+ * heading is (its top less its scroll-margin, from the top of what scrolls)
+ * and which entries are marked.
+ */
+const clickTocAndWatch = (viewer, text, { list = '.mpv-toc', frames = 12 } = {}) =>
+  viewer.evaluate(
+    async (el, [text, list, frames]) => {
+      const s = el.shadowRoot;
+      const heading = [...s.querySelectorAll('.mpv-content h2, .mpv-content h3')].find((h) => h.textContent === text);
+      const main = s.querySelector('.mpv-main');
+      const fixed = s.querySelector('.mpv').dataset.height === 'fixed';
+      const where = () =>
+        Math.round(heading.getBoundingClientRect().top - (parseFloat(getComputedStyle(heading).scrollMarginTop) || 0) - (fixed ? main.getBoundingClientRect().top : 0));
+      const marked = () => [...s.querySelectorAll('.mpv-toc .mpv-toc-list a[aria-current]')].map((a) => a.textContent).join();
+      const start = where();
+      [...s.querySelectorAll(`${list} .mpv-toc-list a`)].find((a) => a.textContent === text).click();
+      const steps = [{ at: where(), marked: marked() }];
+      for (let i = 0; i < frames; i++) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        steps.push({ at: where(), marked: marked() });
+      }
+      return { start, steps };
+    },
+    [text, list, frames],
+  );
+
+test('[表示/今の章] 目次で選んだ見出しへは、なめらかにスクロールして移る。移る間も、選んだ見出しが強調されたまま', async ({ page }) => {
+  await page.goto(BLANK);
+  const viewer = await mount(page, { options: { pages: LONG_PAGES } });
+  await expect(h1(viewer)).toHaveText('長いページ');
+  const heading = (text) => content(viewer).locator('h2, h3', { hasText: new RegExp(`^${text}$`) });
+
+  // 画面のスクロール：押した直後はまだ途中で、少しずつ近づく。途中で通る見出し（A1・A2）ではなく B が強調される
+  const { start, steps } = await clickTocAndWatch(viewer, 'B');
+  expect(start).toBeGreaterThan(1000);
+  expect(steps[0].at).toBeGreaterThan(1000);
+  const moving = steps.filter((step) => step.at > 2 && step.at < start - 2);
+  expect(moving.length).toBeGreaterThan(1);
+  for (let i = 1; i < steps.length; i++) expect(steps[i].at).toBeLessThanOrEqual(steps[i - 1].at);
+  expect(new Set(steps.map((step) => step.marked))).toEqual(new Set(['B']));
+  // 着いたら見出しはツールバーのすぐ下。止まった後も B
+  await expect.poll(async () => Math.abs(await scrolledTop(heading('B')))).toBeLessThan(1);
+  await page.waitForTimeout(400);
+  expect(await tocState(viewer)).toEqual({ shown: ['A', 'B', 'B1', 'C'], current: ['B'] });
+  expect((await urlState(page)).hash).toBe('B');
+
+  // 上へ戻るときも同じ
+  const back = await clickTocAndWatch(viewer, 'A1');
+  expect(back.steps.filter((step) => step.at < -2 && step.at > back.start + 2).length).toBeGreaterThan(1);
+  expect(new Set(back.steps.map((step) => step.marked))).toEqual(new Set(['A1']));
+  await expect.poll(async () => Math.abs(await scrolledTop(heading('A1')))).toBeLessThan(1);
+  await page.waitForTimeout(400);
+  expect((await tocState(viewer)).current).toEqual(['A1']);
+});
+
+test('[表示/今の章] 目次からのスクロールの途中で、利用者がスクロールすると、強調は読んでいる見出しに戻る', async ({ page }) => {
+  await page.goto(BLANK);
+  const viewer = await mount(page, { options: { pages: LONG_PAGES } });
+  await expect(h1(viewer)).toHaveText('長いページ');
+  const marked = await viewer.evaluate(async (el) => {
+    const s = el.shadowRoot;
+    [...s.querySelectorAll('.mpv-toc .mpv-toc-list a')].find((a) => a.textContent === 'C').click();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    const before = [...s.querySelectorAll('.mpv-toc .mpv-toc-list a[aria-current]')].map((a) => a.textContent);
+    window.dispatchEvent(new WheelEvent('wheel', { deltaY: 100 }));
+    const after = [...s.querySelectorAll('.mpv-toc .mpv-toc-list a[aria-current]')].map((a) => a.textContent);
+    return { before, after };
+  });
+  expect(marked.before).toEqual(['C']);
+  expect(marked.after).not.toEqual(['C']);
+});
+
+test('[表示/今の章] 高さを指定した場合も、目次からは本文の場所の中でなめらかにスクロールする', async ({ page }) => {
+  await page.goto(BLANK);
+  const viewer = await mount(page, { options: { pages: LONG_PAGES }, style: 'height: 500px' });
+  await expect(h1(viewer)).toHaveText('長いページ');
+  const { start, steps } = await clickTocAndWatch(viewer, 'B');
+  expect(steps.filter((step) => step.at > 2 && step.at < start - 2).length).toBeGreaterThan(1);
+  expect(new Set(steps.map((step) => step.marked))).toEqual(new Set(['B']));
+  await expect.poll(() => clickTocAndWatch(viewer, 'B', { frames: 0 }).then((r) => Math.abs(r.start))).toBeLessThan(1);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+});
+
+test('[表示/今の章] 狭い表示幅の折りたたみの目次で選ぶと、目次を閉じてから、選んだ見出しへなめらかにスクロールする', async ({ page }) => {
+  await page.goto(BLANK);
+  const viewer = await mount(page, { options: { pages: LONG_PAGES }, style: 'width: 600px' });
+  await expect(h1(viewer)).toHaveText('長いページ');
+  const folded = viewer.locator('.mpv-toc-mobile');
+  await folded.locator('summary').click();
+  const { start, steps } = await clickTocAndWatch(viewer, 'B', { list: '.mpv-toc-mobile' });
+  expect(await folded.evaluate((el) => el.open)).toBe(false);
+  expect(steps.filter((step) => step.at > 2 && step.at < start - 2).length).toBeGreaterThan(1);
+  await expect.poll(async () => Math.abs(await scrolledTop(content(viewer).locator('h2', { hasText: /^B$/ })))).toBeLessThan(1);
+});
+
+test('[表示/今の章] 動きを減らす設定（prefers-reduced-motion）では、目次で選んだ見出しへすぐ移る', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.goto(BLANK);
+  const viewer = await mount(page, { options: { pages: LONG_PAGES } });
+  await expect(h1(viewer)).toHaveText('長いページ');
+  const { start, steps } = await clickTocAndWatch(viewer, 'B', { frames: 1 });
+  expect(start).toBeGreaterThan(1000);
+  expect(Math.abs(steps[0].at)).toBeLessThan(1);
+  expect(steps[0].marked).toBe('B');
 });
 
 // ======================================================================

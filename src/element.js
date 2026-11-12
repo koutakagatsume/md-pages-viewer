@@ -23,6 +23,16 @@ const SEARCH_READ_ON_INPUT_MS = 50;
 // and the results found so far are shown again at most this often.
 const SEARCH_REFRESH_MS = 250;
 
+// The table of contents keeps the heading it scrolls to marked (spec 5.4)
+// until the scrolling has stopped this long (ms), or until it has not begun
+// after the first wait. The user scrolling (these events; of the keys, those
+// that scroll) ends it at once. A press alone does not: the entries would
+// change under the pointer before its click (another entry, say).
+const TOC_HOLD_QUIET = 150;
+const TOC_HOLD_START = 300;
+const TOC_HOLD_BREAKERS = ['wheel', 'touchmove', 'keydown'];
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+
 /** Creates an element. `hidden: true` sets the attribute; other props are attributes as given. */
 function h(tag, props, ...children) {
   const element = document.createElement(tag);
@@ -317,11 +327,19 @@ export class MdPagesViewerElement extends HTMLElement {
   // The heading last scrolled to by a link, the table of contents or a search
   // result: marked even when the body cannot scroll it up to the line.
   #tocTaken = null;
+  // While the table of contents scrolls gradually to a heading: that heading,
+  // and what ends the hold (see #holdToc).
+  #tocHold = null;
   #spyFrame = 0;
   // Scroll events do not cross shadow boundaries, so both our own shadow
   // root (the body column) and the document (the window and host elements)
   // are listened to, in the capture phase. One update per frame.
   #onSpyScroll = () => {
+    const hold = this.#tocHold;
+    if (hold) {
+      clearTimeout(hold.timer);
+      hold.timer = setTimeout(hold.arrive, TOC_HOLD_QUIET);
+    }
     if (this.#spyFrame) return;
     this.#spyFrame = requestAnimationFrame(() => {
       this.#spyFrame = 0;
@@ -521,6 +539,7 @@ export class MdPagesViewerElement extends HTMLElement {
     document.removeEventListener('scroll', this.#onSpyScroll, { capture: true });
     if (this.#spyFrame) cancelAnimationFrame(this.#spyFrame);
     this.#spyFrame = 0;
+    this.#releaseToc(false);
     if (this.#searchPrep && this.#searchPrep.timer) {
       clearTimeout(this.#searchPrep.timer);
       this.#searchPrep.timer = 0;
@@ -1226,10 +1245,47 @@ export class MdPagesViewerElement extends HTMLElement {
     return null;
   }
 
-  /** Brings an element of the body to the top of the view, and marks it in the table of contents if it is listed there. */
-  #scrollToTarget(target) {
+  /**
+   * Brings an element of the body to the top of the view, and marks it in
+   * the table of contents if it is listed there. smooth (the table of
+   * contents, spec 5.4): it scrolls there gradually, with the entry marked
+   * from the start; with prefers-reduced-motion, at once.
+   */
+  #scrollToTarget(target, { smooth = false } = {}) {
     this.#tocTaken = target;
+    if (smooth && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      this.#holdToc(target);
+      target.scrollIntoView({ block: 'start', behavior: 'smooth' });
+      return;
+    }
+    this.#releaseToc(false);
     target.scrollIntoView({ block: 'start' });
+  }
+
+  /**
+   * While the view scrolls gradually to a heading, the table of contents
+   * keeps that heading marked, not each heading passed on the way. The hold
+   * ends once the scrolling has stopped for a moment, or at once when the
+   * user scrolls.
+   */
+  #holdToc(target) {
+    this.#releaseToc(false);
+    const release = (event) => {
+      if (event && event.type === 'keydown' && !SCROLL_KEYS.has(event.key)) return;
+      this.#releaseToc();
+    };
+    const arrive = () => this.#releaseToc();
+    this.#tocHold = { target, release, arrive, timer: setTimeout(arrive, TOC_HOLD_START) };
+    for (const type of TOC_HOLD_BREAKERS) window.addEventListener(type, release, { capture: true, passive: true });
+  }
+
+  #releaseToc(update = true) {
+    const hold = this.#tocHold;
+    if (!hold) return;
+    clearTimeout(hold.timer);
+    for (const type of TOC_HOLD_BREAKERS) window.removeEventListener(type, hold.release, { capture: true });
+    this.#tocHold = null;
+    if (update) this.#updateTocCurrent();
   }
 
   #scrollToTop() {
@@ -1359,10 +1415,10 @@ export class MdPagesViewerElement extends HTMLElement {
     return true;
   }
 
-  #goToHash(hash) {
+  #goToHash(hash, { smooth = false } = {}) {
     const target = this.#findInBody(hash);
     if (!target) return;
-    this.#scrollToTarget(target);
+    this.#scrollToTarget(target, { smooth });
     this.#updateTocCurrent();
     if (this.#paramName()) {
       const url = new URL(location.href);
@@ -1458,8 +1514,9 @@ export class MdPagesViewerElement extends HTMLElement {
     }
     if (!inBody && link.dataset.mpvToc !== undefined) {
       event.preventDefault();
-      this.#goToHash(link.dataset.mpvToc);
+      // Folded first, so the body above the heading is where it will stay.
       this.#ui.tocMobile.open = false;
+      this.#goToHash(link.dataset.mpvToc, { smooth: true });
       return;
     }
     if (!inBody) return;
@@ -1898,6 +1955,7 @@ export class MdPagesViewerElement extends HTMLElement {
   #setToc(entries) {
     const empty = entries.length === 0;
     this.#tocTaken = null;
+    this.#releaseToc(false);
     this.#ui.toc.hidden = empty;
     this.#ui.tocMobile.hidden = empty;
     this.#ui.tocMobile.open = false;
@@ -1938,27 +1996,32 @@ export class MdPagesViewerElement extends HTMLElement {
   #updateTocCurrent() {
     const items = this.#tocItems;
     if (items.length === 0) return;
-    const view = this.#readingView();
-    // Just below the top: a heading taken there (by the table of contents,
-    // a link or a search result) is the one marked, not the next one.
-    const line = view.top + 16;
-    let current = 0;
-    items.forEach((item, index) => {
-      if (item.heading && item.heading.getBoundingClientRect().top <= line) current = index;
-    });
-    // A heading taken by a link that the body cannot scroll up to the line
-    // (a short page, or one of the last headings) is still the one marked,
-    // while it is in view and the body cannot scroll down any further.
-    // Reading past it lets it go.
-    const taken = this.#tocTaken ? items.findIndex((item) => item.heading === this.#tocTaken) : -1;
-    if (taken >= 0 && current > taken) this.#tocTaken = null;
-    if (taken > current && view.noFurther && items[taken].heading.getBoundingClientRect().top < view.bottom) {
-      current = taken;
-    } else if (view.atEnd) {
-      for (let index = items.length - 1; index > current; index--) {
-        if (items[index].heading && items[index].heading.getBoundingClientRect().top < view.bottom) {
-          current = index;
-          break;
+    // Scrolling gradually to a heading of the table of contents: that one.
+    const held = this.#tocHold ? items.findIndex((item) => item.heading === this.#tocHold.target) : -1;
+    let current = held;
+    if (held < 0) {
+      const view = this.#readingView();
+      // Just below the top: a heading taken there (by the table of contents,
+      // a link or a search result) is the one marked, not the next one.
+      const line = view.top + 16;
+      current = 0;
+      items.forEach((item, index) => {
+        if (item.heading && item.heading.getBoundingClientRect().top <= line) current = index;
+      });
+      // A heading taken by a link that the body cannot scroll up to the line
+      // (a short page, or one of the last headings) is still the one marked,
+      // while it is in view and the body cannot scroll down any further.
+      // Reading past it lets it go.
+      const taken = this.#tocTaken ? items.findIndex((item) => item.heading === this.#tocTaken) : -1;
+      if (taken >= 0 && current > taken) this.#tocTaken = null;
+      if (taken > current && view.noFurther && items[taken].heading.getBoundingClientRect().top < view.bottom) {
+        current = taken;
+      } else if (view.atEnd) {
+        for (let index = items.length - 1; index > current; index--) {
+          if (items[index].heading && items[index].heading.getBoundingClientRect().top < view.bottom) {
+            current = index;
+            break;
+          }
         }
       }
     }
