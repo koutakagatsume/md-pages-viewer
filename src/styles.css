@@ -755,6 +755,26 @@
   font-size: 1.2em;
 }
 
+/* The heading arrived at from the table of contents (spec 5.4): its words
+   and a thick underline turn to the accent color, then fade back. */
+.mpv-content .mpv-target-heading {
+  animation: mpv-target-heading 1.5s ease-out;
+}
+
+@keyframes mpv-target-heading {
+  10%,
+  35% {
+    color: var(--_accent);
+    box-shadow: inset 0 -3px 0 0 var(--_accent);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mpv-content .mpv-target-heading {
+    animation: none;
+  }
+}
+
 .mpv-content h4 {
   font-size: 1.05em;
 }

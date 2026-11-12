@@ -330,6 +330,8 @@ export class MdPagesViewerElement extends HTMLElement {
   // While the table of contents scrolls gradually to a heading: that heading,
   // and what ends the hold (see #holdToc).
   #tocHold = null;
+  // The heading shown for a moment on arriving there (see #markTarget).
+  #target = null;
   #spyFrame = 0;
   // Scroll events do not cross shadow boundaries, so both our own shadow
   // root (the body column) and the document (the window and host elements)
@@ -1265,8 +1267,9 @@ export class MdPagesViewerElement extends HTMLElement {
   /**
    * While the view scrolls gradually to a heading, the table of contents
    * keeps that heading marked, not each heading passed on the way. The hold
-   * ends once the scrolling has stopped for a moment, or at once when the
-   * user scrolls.
+   * ends once the scrolling has stopped for a moment (arrived: the heading
+   * is then shown for a moment, see #markTarget), or at once when the user
+   * scrolls.
    */
   #holdToc(target) {
     this.#releaseToc(false);
@@ -1274,18 +1277,53 @@ export class MdPagesViewerElement extends HTMLElement {
       if (event && event.type === 'keydown' && !SCROLL_KEYS.has(event.key)) return;
       this.#releaseToc();
     };
-    const arrive = () => this.#releaseToc();
+    const arrive = () => this.#releaseToc(true, true);
     this.#tocHold = { target, release, arrive, timer: setTimeout(arrive, TOC_HOLD_START) };
     for (const type of TOC_HOLD_BREAKERS) window.addEventListener(type, release, { capture: true, passive: true });
   }
 
-  #releaseToc(update = true) {
+  #releaseToc(update = true, arrived = false) {
     const hold = this.#tocHold;
     if (!hold) return;
     clearTimeout(hold.timer);
     for (const type of TOC_HOLD_BREAKERS) window.removeEventListener(type, hold.release, { capture: true });
     this.#tocHold = null;
     if (update) this.#updateTocCurrent();
+    if (arrived) this.#markTarget(hold.target);
+  }
+
+  /**
+   * Shows where the table of contents has brought the reader (spec 5.4):
+   * the heading's words and a thick underline turn to the accent color and
+   * fade back (styles.css). It carries the part target-heading meanwhile.
+   * Not with prefers-reduced-motion.
+   */
+  #markTarget(heading) {
+    this.#unmarkTarget();
+    if (!heading.isConnected || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    // The same heading again: taken off and put back, its animation starts over.
+    void heading.offsetWidth;
+    heading.classList.add('mpv-target-heading');
+    heading.part.add('target-heading');
+    const done = (event) => {
+      if (event.target === heading) this.#unmarkTarget();
+    };
+    heading.addEventListener('animationend', done);
+    heading.addEventListener('animationcancel', done);
+    this.#target = { heading, done };
+  }
+
+  #unmarkTarget() {
+    const target = this.#target;
+    if (!target) return;
+    this.#target = null;
+    const { heading, done } = target;
+    heading.removeEventListener('animationend', done);
+    heading.removeEventListener('animationcancel', done);
+    heading.classList.remove('mpv-target-heading');
+    heading.part.remove('target-heading');
+    if (heading.classList.length === 0) heading.removeAttribute('class');
+    if (heading.part.length === 0) heading.removeAttribute('part');
   }
 
   #scrollToTop() {
@@ -1956,6 +1994,7 @@ export class MdPagesViewerElement extends HTMLElement {
     const empty = entries.length === 0;
     this.#tocTaken = null;
     this.#releaseToc(false);
+    this.#unmarkTarget();
     this.#ui.toc.hidden = empty;
     this.#ui.tocMobile.hidden = empty;
     this.#ui.tocMobile.open = false;

@@ -250,6 +250,98 @@ test('[表示/今の章] 狭い表示幅の折りたたみの目次で選ぶと�
   await expect.poll(async () => Math.abs(await scrolledTop(content(viewer).locator('h2', { hasText: /^B$/ })))).toBeLessThan(1);
 });
 
+/** The heading `text` of the body: whether it is marked (part target-heading), and its color and shadow. */
+const targetState = (viewer, text) =>
+  viewer.evaluate((el, text) => {
+    const heading = [...el.shadowRoot.querySelectorAll('.mpv-content h2, .mpv-content h3')].find((h) => h.textContent === text);
+    const style = getComputedStyle(heading);
+    return {
+      marked: heading.part.contains('target-heading'),
+      part: heading.getAttribute('part'),
+      moving: heading.getAnimations().map((animation) => animation.animationName),
+      color: style.color,
+      shadow: style.boxShadow,
+      outline: style.outlineStyle,
+    };
+  }, text);
+
+test('[表示/今の章] 目次で選んだ見出しに着くと、その見出しの文字と下線が強調色になり、元に戻る', async ({ page }) => {
+  await page.goto(BLANK);
+  await page.addStyleTag({ content: 'md-pages-viewer { --mpv-color-accent: rgb(200, 0, 100); }' });
+  const viewer = await mount(page, { options: { pages: LONG_PAGES } });
+  await expect(h1(viewer)).toHaveText('長いページ');
+  const normal = await targetState(viewer, 'B');
+  expect(normal).toMatchObject({ marked: false, part: null, moving: [] });
+
+  // スクロールしている間は示さず、着いてから示す
+  const { steps } = await viewer.evaluate(async (el) => {
+    const s = el.shadowRoot;
+    const heading = [...s.querySelectorAll('.mpv-content h2')].find((h) => h.textContent === 'B');
+    [...s.querySelectorAll('.mpv-toc .mpv-toc-list a')].find((a) => a.textContent === 'B').click();
+    const steps = [];
+    for (let i = 0; i < 6; i++) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      steps.push(heading.part.contains('target-heading'));
+    }
+    return { steps };
+  });
+  expect(steps).not.toContain(true);
+  await expect.poll(async () => (await targetState(viewer, 'B')).marked).toBe(true);
+
+  // いちばん濃いところ：文字と太い下線が強調色
+  const strong = await viewer.evaluate((el) => {
+    const heading = [...el.shadowRoot.querySelectorAll('.mpv-content h2')].find((h) => h.textContent === 'B');
+    const [animation] = heading.getAnimations();
+    animation.pause();
+    animation.currentTime = 400;
+    const style = getComputedStyle(heading);
+    return { name: animation.animationName, color: style.color, shadow: style.boxShadow };
+  });
+  expect(strong.name).toBe('mpv-target-heading');
+  expect(strong.color).toBe('rgb(200, 0, 100)');
+  expect(strong.shadow).toBe('rgb(200, 0, 100) 0px -3px 0px 0px inset');
+
+  // 終わると元に戻り、part も外れる
+  await viewer.evaluate((el) => el.shadowRoot.getAnimations().forEach((animation) => animation.finish()));
+  await expect.poll(() => targetState(viewer, 'B')).toMatchObject({ marked: false, part: null, moving: [], color: normal.color, shadow: normal.shadow });
+
+  // もう着いている見出しを選び直しても、もう一度示す
+  await toc(viewer).locator('a', { hasText: /^B$/ }).click();
+  await expect.poll(async () => (await targetState(viewer, 'B')).moving).toEqual(['mpv-target-heading']);
+});
+
+test('[表示/今の章] 目次からのスクロールの途中で利用者がスクロールしたときと、ページを切り替えたときは、見出しを示さない', async ({ page }) => {
+  await page.goto(BLANK);
+  const viewer = await mount(page, { options: { pages: LONG_PAGES } });
+  await expect(h1(viewer)).toHaveText('長いページ');
+  await viewer.evaluate(async (el) => {
+    [...el.shadowRoot.querySelectorAll('.mpv-toc .mpv-toc-list a')].find((a) => a.textContent === 'C').click();
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    window.dispatchEvent(new WheelEvent('wheel', { deltaY: 100 }));
+  });
+  await page.waitForTimeout(1500);
+  expect((await targetState(viewer, 'C')).marked).toBe(false);
+
+  // 示している途中でページを切り替えて戻っても、残っていない
+  await toc(viewer).locator('a', { hasText: /^B$/ }).click();
+  await expect.poll(async () => (await targetState(viewer, 'B')).marked).toBe(true);
+  await sidebarLink(viewer, '短いページ').click();
+  await expect(h1(viewer)).toHaveText('短いページ');
+  await sidebarLink(viewer, '長いページ').click();
+  await expect(h1(viewer)).toHaveText('長いページ');
+  expect((await targetState(viewer, 'B')).marked).toBe(false);
+});
+
+test('[表示/今の章] 示している見出しは ::part(target-heading) で組み込み先の CSS から変えられる', async ({ page }) => {
+  await page.goto(BLANK);
+  await page.addStyleTag({ content: 'md-pages-viewer::part(target-heading) { outline: 2px dashed rgb(0, 128, 0); }' });
+  const viewer = await mount(page, { options: { pages: LONG_PAGES } });
+  await expect(h1(viewer)).toHaveText('長いページ');
+  expect((await targetState(viewer, 'B')).outline).toBe('none');
+  await toc(viewer).locator('a', { hasText: /^B$/ }).click();
+  await expect.poll(async () => (await targetState(viewer, 'B')).outline).toBe('dashed');
+});
+
 test('[表示/今の章] 動きを減らす設定（prefers-reduced-motion）では、目次で選んだ見出しへすぐ移る', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto(BLANK);
@@ -259,6 +351,9 @@ test('[表示/今の章] 動きを減らす設定（prefers-reduced-motion）で
   expect(start).toBeGreaterThan(1000);
   expect(Math.abs(steps[0].at)).toBeLessThan(1);
   expect(steps[0].marked).toBe('B');
+  // 着いた見出しを示す動きも付けない
+  await page.waitForTimeout(600);
+  expect(await targetState(viewer, 'B')).toMatchObject({ marked: false, moving: [] });
 });
 
 // ======================================================================
