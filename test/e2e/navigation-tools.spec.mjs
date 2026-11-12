@@ -390,6 +390,112 @@ test('[表示/開閉の動き] ページ一覧で子ページを開閉すると�
   expect((await box(branch)).height).toBeCloseTo(full, 0);
 });
 
+/**
+ * Runs `act` on the viewer and, before the task ends (options are applied
+ * in a microtask), stops every animation it started at `ms` from its start. Returns the height of the first branch of
+ * the sidebar ("はじめに") then, what moves, and the arrows' state.
+ */
+const actAndPause = (viewer, act, ms) =>
+  viewer.evaluate(
+    async (el, [act, ms]) => {
+      const s = el.shadowRoot;
+      // eslint-disable-next-line no-new-func
+      new Function('el', act)(el);
+      for (let i = 0; i < 5; i++) await Promise.resolve();
+      const animations = s.getAnimations();
+      for (const animation of animations) {
+        animation.pause();
+        animation.currentTime = ms;
+      }
+      const branch = s.querySelector('.mpv-tree > li:first-child > ul');
+      return {
+        height: branch.hidden ? 0 : branch.getBoundingClientRect().height,
+        transitions: animations.map((animation) => animation.transitionProperty).filter(Boolean),
+        slides: animations.filter((animation) => !animation.transitionProperty).length,
+        arrows: [...s.querySelectorAll('.mpv-tree .mpv-toggle')].map((t) => t.getAttribute('aria-expanded')),
+      };
+    },
+    [act, ms],
+  );
+
+test('[表示/開閉の動き] ページ名を押して子ページが開くときも、矢印で開くときと同じように高さが伸び、矢印が回る', async ({ page }) => {
+  await page.goto(BLANK);
+  const viewer = await mount(page, { options: { pages: SAMPLE, currentId: 'faq' } });
+  await expect(h1(viewer)).toHaveText('FAQ');
+  await expect(sidebarLink(viewer, 'ログイン方法')).toBeHidden();
+  const clickPage = (title) => `[...el.shadowRoot.querySelectorAll('.mpv-tree a')].find((a) => a.textContent === '${title}').click();`;
+
+  // 「はじめに」を押す：ページが切り替わり、子ページの並びが伸びていく
+  const opening = await actAndPause(viewer, clickPage('はじめに'), 100);
+  expect(opening.slides).toBe(1);
+  expect(opening.transitions).toContain('transform');
+  expect(opening.arrows[0]).toBe('true');
+  await expect(sidebarLink(viewer, 'ログイン方法')).toBeVisible();
+  await finishTransitions(viewer);
+  const full = (await box(viewer.locator('.mpv-tree > li:first-child > ul'))).height;
+  expect(opening.height).toBeGreaterThan(1);
+  expect(opening.height).toBeLessThan(full - 1);
+  await expect(h1(viewer)).toHaveText('はじめに');
+
+  // 開いている枝の中のページを押すと、その下の枝が伸びる
+  const inside = await actAndPause(viewer, clickPage('ログイン方法'), 100);
+  expect(inside.slides).toBe(1);
+  expect(inside.arrows).toEqual(['true', 'true']);
+  await finishTransitions(viewer);
+  await expect(sidebarLink(viewer, '深い階層')).toBeVisible();
+
+  // もう開いている枝のページへ移るときは動かない
+  const again = await actAndPause(viewer, clickPage('はじめに'), 100);
+  expect(again.slides).toBe(0);
+  expect(again.transitions).not.toContain('transform');
+  await expect(h1(viewer)).toHaveText('はじめに');
+});
+
+test('[表示/開閉の動き] 何階層も閉じた先のページを開くと、いちばん外の枝が中の枝ごと伸びる。最初の表示とページの差し替えでは動かさない', async ({ page }) => {
+  await page.goto(BLANK);
+  // 最初の表示：開いた状態で出て、動きはない
+  const first = await page.evaluate(async (pages) => {
+    const el = document.createElement('md-pages-viewer');
+    el.pages = pages;
+    el.currentId = 'deep';
+    document.body.append(el);
+    for (let i = 0; i < 20 && !el.shadowRoot.querySelector('.mpv-content h1'); i++) await new Promise((resolve) => requestAnimationFrame(resolve));
+    return { moving: el.shadowRoot.getAnimations().length, h1: el.shadowRoot.querySelector('.mpv-content h1')?.textContent };
+  }, SAMPLE);
+  expect(first).toEqual({ moving: 0, h1: '深い階層' });
+  const viewer = page.locator('md-pages-viewer');
+  /** Closes the branch under the page `title` with its toggle, at once. */
+  const closeBranch = (title) =>
+    viewer.evaluate((el, title) => {
+      const row = [...el.shadowRoot.querySelectorAll('.mpv-tree .mpv-row')].find((r) => r.querySelector('a').textContent === title);
+      row.querySelector('.mpv-toggle').click();
+      el.shadowRoot.getAnimations().forEach((animation) => animation.finish());
+    }, title);
+
+  // 「ログイン方法」と「はじめに」の枝を閉じてから FAQ へ。そこから「深い階層」を開くと、
+  // いちばん外の「はじめに」の枝だけが伸び、中の「ログイン方法」の枝はその中に開いた状態で出る
+  await closeBranch('ログイン方法');
+  await closeBranch('はじめに');
+  await sidebarLink(viewer, 'FAQ').click();
+  await expect(h1(viewer)).toHaveText('FAQ');
+  const deep = await actAndPause(viewer, "el.currentId = 'deep';", 100);
+  expect(deep.slides).toBe(1);
+  expect(deep.arrows).toEqual(['true', 'true']);
+  await finishTransitions(viewer);
+  await expect(sidebarLink(viewer, '深い階層')).toBeVisible();
+  await expect(h1(viewer)).toHaveText('深い階層');
+
+  // ページのデータを差し替えたとき（言語の切り替えなど）は、開く枝があっても動かさない
+  await closeBranch('はじめに');
+  await expect(sidebarLink(viewer, 'ログイン方法')).toBeHidden();
+  const swapped = await viewer.evaluate(async (el) => {
+    el.pages = el.pages.map((p) => ({ ...p }));
+    for (let i = 0; i < 3; i++) await new Promise((resolve) => requestAnimationFrame(resolve));
+    return { moving: el.shadowRoot.getAnimations().length, shown: !el.shadowRoot.querySelector('.mpv-tree > li:first-child > ul').hidden };
+  });
+  expect(swapped).toEqual({ moving: 0, shown: true });
+});
+
 test('[表示/開閉の動き] 動きを減らす設定（prefers-reduced-motion）では、動かさずにすぐ開閉する', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto(BLANK);

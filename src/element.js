@@ -301,6 +301,7 @@ export class MdPagesViewerElement extends HTMLElement {
   #displayed = null;
   #initialId = null;
   #expanded = new Set();
+  #treeModel = null; // the page list the sidebar was last drawn from
 
   #ui;
   #resizeObserver;
@@ -1758,12 +1759,22 @@ export class MdPagesViewerElement extends HTMLElement {
 
   #renderSidebar(currentId, { keepExpanded = false } = {}) {
     const model = this.#model;
-    // Open everything from the top level down to the current page.
+    // Open everything from the top level down to the current page. A branch
+    // this opens slides open like its toggle (spec 5.4), when the sidebar of
+    // the same list was drawn before; the first drawing of a list is at once.
+    const opening = new Set();
     if (currentId !== null && !keepExpanded) {
-      for (const id of model.pathTo(currentId)) this.#expanded.add(id);
+      const redrawn = this.#treeModel === model;
+      for (const id of model.pathTo(currentId)) {
+        if (redrawn && !this.#expanded.has(id)) opening.add(id);
+        this.#expanded.add(id);
+      }
     }
+    this.#treeModel = model;
+    const turning = []; // toggles of the branches that open now
+    const sliding = []; // the outermost of those branches: each slides as a whole
     const name = this.#linkParamName();
-    const build = (ids) => {
+    const build = (ids, insideSlide = false) => {
       const list = document.createElement('ul');
       for (const id of ids) {
         const page = model.get(id);
@@ -1778,7 +1789,8 @@ export class MdPagesViewerElement extends HTMLElement {
           toggle.setAttribute('part', 'toggle');
           toggle.dataset.mpvToggle = id;
           toggle.setAttribute('aria-label', this.#text('toggle', page.title));
-          toggle.setAttribute('aria-expanded', String(this.#expanded.has(id)));
+          toggle.setAttribute('aria-expanded', String(this.#expanded.has(id) && !opening.has(id)));
+          if (opening.has(id)) turning.push(toggle);
           row.append(toggle);
         } else {
           const space = document.createElement('span');
@@ -1795,8 +1807,12 @@ export class MdPagesViewerElement extends HTMLElement {
         row.append(link);
         item.append(row);
         if (children.length > 0) {
-          const sub = build(children);
-          sub.hidden = !this.#expanded.has(id);
+          // A branch inside one that slides is simply shown: the outer one
+          // carries it along as it grows.
+          const slides = opening.has(id) && !insideSlide;
+          const sub = build(children, insideSlide || slides);
+          sub.hidden = !this.#expanded.has(id) || slides;
+          if (slides) sliding.push(sub);
           item.append(sub);
         }
         list.append(item);
@@ -1807,6 +1823,12 @@ export class MdPagesViewerElement extends HTMLElement {
     tree.className = 'mpv-tree';
     this.#ui.tree.replaceWith(tree);
     this.#ui.tree = tree;
+    if (turning.length > 0) {
+      // The arrows are drawn closed first, so they turn as the toggle's do.
+      void tree.offsetHeight;
+      for (const toggle of turning) toggle.setAttribute('aria-expanded', 'true');
+      for (const sub of sliding) this.#slideBranch(sub, true);
+    }
     // Results from an earlier list are made again.
     if (this.#searchQuery !== '' && this.#searchModel !== model) this.#runSearch({ show: !this.#ui.searchResults.hidden });
     this.#placeSideColumns();
