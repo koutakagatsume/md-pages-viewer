@@ -342,6 +342,55 @@ test('[表示/今の章] 示している見出しは ::part(target-heading) で�
   await expect.poll(async () => (await targetState(viewer, 'B')).outline).toBe('dashed');
 });
 
+/**
+ * Clicks the entry `text` of the table of contents and measures, in the page,
+ * how long its heading carries the part target-heading (ms; null if it does
+ * not come off within 8 seconds), and whether it moves meanwhile.
+ */
+const markTime = (viewer, text) =>
+  viewer.evaluate(async (el, text) => {
+    const s = el.shadowRoot;
+    const heading = [...s.querySelectorAll('.mpv-content h2, .mpv-content h3')].find((h) => h.textContent === text);
+    [...s.querySelectorAll('.mpv-toc .mpv-toc-list a')].find((a) => a.textContent === text).click();
+    const start = performance.now();
+    let on = null;
+    let moving = null;
+    while (performance.now() - start < 8000) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      const marked = heading.part.contains('target-heading');
+      if (marked && on === null) {
+        on = performance.now();
+        moving = heading.getAnimations().map((animation) => animation.animationName);
+      }
+      if (!marked && on !== null) return { shown: Math.round(performance.now() - on), moving };
+    }
+    return { shown: null, moving };
+  }, text);
+
+test('[表示/今の章] 組み込み先が ::part(target-heading) で動きを消しても、見出しの part は1.5秒ほどで外れる', async ({ page }) => {
+  await page.goto(BLANK);
+  await page.addStyleTag({ content: 'md-pages-viewer::part(target-heading) { animation: none; outline: 2px dashed rgb(0, 128, 0); }' });
+  const viewer = await mount(page, { options: { pages: LONG_PAGES } });
+  await expect(h1(viewer)).toHaveText('長いページ');
+  const { shown, moving } = await markTime(viewer, 'B');
+  expect(moving).toEqual([]);
+  expect(shown).toBeGreaterThan(1300);
+  expect(shown).toBeLessThan(2500);
+  expect(await targetState(viewer, 'B')).toMatchObject({ marked: false, part: null, outline: 'none' });
+});
+
+test('[表示/今の章] 組み込み先が動きの長さを変えたときは、その動きが終わってから見出しの part が外れる', async ({ page }) => {
+  await page.goto(BLANK);
+  await page.addStyleTag({ content: 'md-pages-viewer::part(target-heading) { animation-duration: 3s; }' });
+  const viewer = await mount(page, { options: { pages: LONG_PAGES } });
+  await expect(h1(viewer)).toHaveText('長いページ');
+  const { shown, moving } = await markTime(viewer, 'B');
+  expect(moving).toEqual(['mpv-target-heading']);
+  expect(shown).toBeGreaterThan(2800);
+  expect(shown).toBeLessThan(4000);
+  expect((await targetState(viewer, 'B')).marked).toBe(false);
+});
+
 test('[表示/今の章] 動きを減らす設定（prefers-reduced-motion）では、目次で選んだ見出しへすぐ移る', async ({ page }) => {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.goto(BLANK);

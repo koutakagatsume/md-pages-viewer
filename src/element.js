@@ -32,6 +32,9 @@ const TOC_HOLD_QUIET = 150;
 const TOC_HOLD_START = 300;
 const TOC_HOLD_BREAKERS = ['wheel', 'touchmove', 'keydown'];
 const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+// How long the heading reached from the table of contents stays marked when
+// the host has taken its animation away (as long as the animation, styles.css).
+const TARGET_MARK_TIME = 1500;
 
 /** Creates an element. `hidden: true` sets the attribute; other props are attributes as given. */
 function h(tag, props, ...children) {
@@ -1295,8 +1298,10 @@ export class MdPagesViewerElement extends HTMLElement {
   /**
    * Shows where the table of contents has brought the reader (spec 5.4):
    * the heading's words and a thick underline turn to the accent color and
-   * fade back (styles.css). It carries the part target-heading meanwhile.
-   * Not with prefers-reduced-motion.
+   * fade back (styles.css). It carries the part target-heading meanwhile:
+   * until the animation ends, or for TARGET_MARK_TIME when the host has
+   * taken the animation away (::part(target-heading) { animation: none }),
+   * as then no animationend comes. Not with prefers-reduced-motion.
    */
   #markTarget(heading) {
     this.#unmarkTarget();
@@ -1310,14 +1315,18 @@ export class MdPagesViewerElement extends HTMLElement {
     };
     heading.addEventListener('animationend', done);
     heading.addEventListener('animationcancel', done);
-    this.#target = { heading, done };
+    // Ours, or the host's through ::part(), as long as it comes to an end.
+    const ending = heading.getAnimations().some((animation) => animation instanceof CSSAnimation && Number.isFinite(animation.effect?.getComputedTiming().endTime));
+    const timer = ending ? 0 : setTimeout(() => this.#unmarkTarget(), TARGET_MARK_TIME);
+    this.#target = { heading, done, timer };
   }
 
   #unmarkTarget() {
     const target = this.#target;
     if (!target) return;
     this.#target = null;
-    const { heading, done } = target;
+    const { heading, done, timer } = target;
+    clearTimeout(timer);
     heading.removeEventListener('animationend', done);
     heading.removeEventListener('animationcancel', done);
     heading.classList.remove('mpv-target-heading');

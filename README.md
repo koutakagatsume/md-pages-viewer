@@ -303,7 +303,7 @@ md-pages-viewer {
 | `child-meta` | 子ページの章の数・子ページの数 |
 | `callout` | 本文の注意・ヒントの囲み。`note`・`tip`・`important`・`warning`・`caution` も付きます |
 | `callout-title` | 注意・ヒントの囲みの見出し |
-| `target-heading` | 目次で選んで移った本文の見出し。文字と下線が強調色になっている間だけ付きます |
+| `target-heading` | 目次で選んで移った本文の見出し。文字と下線が強調色になっている間だけ付きます。`::part(target-heading)` で動きを消したときも、1.5秒ほどで外れます |
 | `pager` | 本文の最後の前後のページ |
 | `pager-link` | 前後のページの各リンク。前は `previous`、次は `next` も付きます |
 | `status` | 読み込み中・エラーの表示 |
