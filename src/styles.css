@@ -1170,7 +1170,8 @@
    the lists around the body break between phrases, not inside a word
    ("必須" stays whole, a long cell breaks after "番号"). It needs the page's
    language, which the element carries inside (lang on .mpv-layout).
-   Browsers without auto-phrase, or other languages, break as before.
+   Browsers without auto-phrase, or other languages, break as before
+   (short cells in Chinese: below).
    Running text keeps the usual breaking: by phrase, paragraphs get ragged. */
 .mpv-content :is(h1, h2, h3, h4, h5, h6, th, td),
 .mpv-node-link,
@@ -1181,6 +1182,14 @@
 .mpv-search-page,
 .mpv-search-heading {
   word-break: auto-phrase;
+}
+
+/* Chinese line breaking (spec 6): auto-phrase does nothing for Chinese, and
+   a cell breaks anywhere, inside a short word too ("必填" as 必 / 填). A cell
+   of at most 6 characters, spaces not counted (marked in markdown.js), does
+   not break; longer cells break as before, as is usual for Chinese. */
+.mpv-content .mpv-short-cell:lang(zh) {
+  white-space: nowrap;
 }
 
 .mpv-content th,

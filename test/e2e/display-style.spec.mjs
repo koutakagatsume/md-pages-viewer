@@ -468,6 +468,71 @@ test('[表示/日本語の折り返し] 組み込み先の lang を表示の中�
   await expect.poll(() => page.evaluate(() => window.__nested.shadowRoot.querySelector('.mpv-layout')?.getAttribute('lang') ?? 'none')).toBe('ja');
 });
 
+test('[表示/中国語の折り返し] 組み込み先が中国語なら、本文の表の短いセル（空白を除いて6文字まで）は折り返さない。長いセルと、ほかの言語は今のまま', async ({ page }) => {
+  await page.goto(BLANK);
+  // 店舗の登録の表（簡体字・繁体字）。最後の行の「七个字的项目名」は7文字で、対象外
+  const rows = {
+    'zh-CN': [
+      ['项目', '必填', '内容'],
+      ['门店名称', '必填', '在界面和单据中显示的名称（最多 40 个字符）'],
+      ['门店代码', '必填', '在导出和系统对接中用于识别门店的编号（最多 8 个半角字母或数字）'],
+      ['电话号码', '选填', '带不带连字符均可'],
+      ['电子邮件地址', '选填', '作为发送预约确认邮件时的发件人'],
+      ['七个字的项目名', '选填', '内容'],
+    ],
+    'zh-TW': [
+      ['項目', '必填', '內容'],
+      ['店鋪名稱', '必填', '顯示在畫面與單據上的名稱（最多 40 個字）'],
+      ['店鋪代碼', '必填', '在匯出或系統串接時用來識別店鋪的代碼（最多 8 個半形英數字）'],
+      ['電話號碼', '選填', '有無連字號皆可'],
+      ['電子郵件地址', '選填', '寄送預約確認信時的寄件者'],
+      ['七個字的項目名', '選填', '內容'],
+    ],
+  };
+  const table = ([head, ...body]) => [head, ['---', '---', '---'], ...body].map((cells) => `| ${cells.join(' | ')} |`).join('\n');
+  const pages = Object.entries(rows).map(([lang, cells]) => ({ id: lang, parentId: null, title: lang, md: `# ${lang}\n\n${table(cells)}` }));
+  await page.evaluate(() => (document.documentElement.lang = 'zh-CN'));
+  const viewer = await mount(page, { options: { pages }, style: 'width: 360px' });
+  await expect(h1(viewer)).toHaveText('zh-CN');
+
+  // 折り返さないセルの文字と、表が場所からはみ出すか
+  const state = () =>
+    viewer.evaluate((el) => {
+      const s = el.shadowRoot;
+      const box = s.querySelector('.mpv-content .mpv-table-scroll');
+      return {
+        nowrap: [...s.querySelectorAll('.mpv-content th, .mpv-content td')].filter((c) => getComputedStyle(c).whiteSpace === 'nowrap').map((c) => c.textContent.trim()),
+        scrolls: box.scrollWidth > box.clientWidth + 1,
+      };
+    });
+
+  for (const [lang, cells] of Object.entries(rows)) {
+    if (lang !== 'zh-CN') {
+      await page.evaluate((lang) => (document.documentElement.lang = lang), lang);
+      await viewer.evaluate((el, id) => (el.currentId = id), lang);
+      await expect(h1(viewer)).toHaveText(lang);
+    }
+    const all = cells.flat();
+    const short = [...new Set(all.filter((text) => [...text].length <= 6))];
+    const long = all.filter((text) => [...text].length > 20);
+    // 狭い表でも、短い言葉は途中で折れない（「必／填」「门店名／称」にならない）
+    for (const text of short) expect(await linesOf(viewer, '.mpv-content :is(th, td)', text), `${lang} ${text}`).toBe(1);
+    // 折り返さないのは6文字までのセルだけ（7文字のセルと長いセルは今までどおり）。長いセルは折り返し、表ははみ出さない
+    const { nowrap, scrolls } = await state();
+    expect([...new Set(nowrap)].sort(), lang).toEqual([...short].sort());
+    for (const text of long) expect(await linesOf(viewer, '.mpv-content td', text), `${lang} ${text}`).toBeGreaterThan(1);
+    expect(scrolls, lang).toBe(false);
+  }
+
+  // ほかの言語（日本語・英語）では、短いセルも今までどおり
+  for (const [lang, id] of [['ja', 'zh-CN'], ['en', 'zh-TW']]) {
+    await page.evaluate((lang) => (document.documentElement.lang = lang), lang);
+    await viewer.evaluate((el, id) => (el.currentId = id), id);
+    await expect(h1(viewer)).toHaveText(id);
+    expect((await state()).nowrap, lang).toEqual([]);
+  }
+});
+
 test('[表示/本文の書き方] 幅に収まらない表は、本文全体ではなく表の中だけが横にスクロールする。表は表のまま', async ({ page }) => {
   await page.goto(BLANK);
   const wide = Array.from({ length: 6 }, (_, i) => `long_identifier_without_spaces_${i}`);

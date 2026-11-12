@@ -89,6 +89,10 @@ purify.addHook('uponSanitizeAttribute', (node, data) => {
 // as "-->") cannot strip them.
 const MARK = 'data-mpv-';
 
+// The most characters (spaces not counted) a table cell may have and still
+// be kept on one line on a Chinese page: "电子邮件地址" (e-mail address).
+const SHORT_CELL = 6;
+
 /**
  * @param {string} markdown
  * @param {{
@@ -170,6 +174,15 @@ export function renderMarkdown(markdown, resolve, { inert = false, calloutLabels
     box.className = 'mpv-table-scroll';
     table.replaceWith(box);
     box.append(table);
+  }
+
+  // Browsers break Chinese anywhere, inside a short word too ("必填" as
+  // 必 / 填): auto-phrase does nothing for it. A cell of a few characters is
+  // marked so that, on a Chinese page, it does not break at all (styles.css,
+  // spec 6); longer cells break as before, as is usual for Chinese.
+  for (const cell of root.querySelectorAll('th, td')) {
+    const length = [...cell.textContent.replace(/\s+/g, '')].length;
+    if (length > 0 && length <= SHORT_CELL) cell.classList.add('mpv-short-cell');
   }
 
   makeCallouts(root, calloutLabels);
