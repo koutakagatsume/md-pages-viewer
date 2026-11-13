@@ -1076,6 +1076,98 @@
   height: auto;
 }
 
+/* An image shown smaller than it is can be enlarged (spec 5.4). Nothing
+   else about it changes. */
+.mpv-content img[data-mpv-zoom] {
+  cursor: zoom-in;
+}
+
+.mpv-content img[data-mpv-zoom]:focus-visible {
+  outline: 2px solid var(--_accent);
+  outline-offset: 2px;
+}
+
+/* The enlarged image: a modal dialog in the top layer, over the whole
+   window and the host page (spec 6), the page darkened behind. The image at
+   its own size, or smaller to fit; its alternative text below; a button to
+   close at the top right. The same in light and dark themes. */
+.mpv-zoom {
+  --_zoom-gap: clamp(16px, 4vw, 48px);
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #fff;
+  overflow: hidden;
+  /* A pinch still zooms the page; a swipe does not scroll it. */
+  touch-action: pinch-zoom;
+}
+
+.mpv-zoom[open] {
+  display: grid;
+  place-items: center;
+}
+
+.mpv-zoom::backdrop {
+  background: rgb(0 0 0 / 0.8);
+}
+
+.mpv-zoom-figure {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100vw - 2 * var(--_zoom-gap));
+  margin: 0;
+}
+
+.mpv-zoom-image {
+  display: block;
+  max-width: calc(100vw - 2 * var(--_zoom-gap));
+  max-height: calc(100vh - 112px);
+  max-height: calc(100dvh - 112px);
+  border-radius: 4px;
+  box-shadow: 0 8px 32px rgb(0 0 0 / 0.5);
+  background: #fff;
+}
+
+.mpv-zoom-caption {
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.mpv-zoom-close {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(255 255 255 / 0.15);
+  color: inherit;
+  cursor: pointer;
+}
+
+.mpv-zoom-close:hover {
+  background: rgb(255 255 255 / 0.25);
+}
+
+.mpv-zoom-close:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 2px;
+}
+
 .mpv-content blockquote {
   padding: 0.2em 1em;
   border-left: 4px solid var(--_border);

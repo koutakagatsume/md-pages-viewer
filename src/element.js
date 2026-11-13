@@ -74,7 +74,16 @@ const ICONS = {
   tocClose: () => icon(PANEL, ['path', { d: 'M15 4v16' }], ['path', { d: 'M8 10l2 2l-2 2' }]),
   tocOpen: () => icon(PANEL, ['path', { d: 'M15 4v16' }], ['path', { d: 'M10 10l-2 2l2 2' }]),
   search: () => icon(['circle', { cx: '11', cy: '11', r: '6' }], ['path', { d: 'M20 20l-4.5-4.5' }]),
+  close: () => {
+    const svg = icon(['path', { d: 'M6 6l12 12M18 6L6 18' }]);
+    for (const [name, value] of [['width', '20'], ['height', '20'], ['stroke-width', '2.4']]) svg.setAttribute(name, value);
+    return svg;
+  },
 };
+
+// A body image inside one of these is part of a control: a click on it is
+// the control's (a link opens), so it is never enlarged (spec 5.4).
+const IMAGE_CONTROLS = 'a[href], button, label, summary';
 
 // Built with DOM calls rather than innerHTML: a page that enforces Trusted
 // Types must be able to show these parts (and any error) without our policy.
@@ -124,6 +133,19 @@ function buildParts() {
         ),
         h('nav', { class: 'mpv-toc', part: 'toc', hidden: true }, h('div', { class: 'mpv-column-head' }), tocList()),
         h('div', { class: 'mpv-backdrop' }),
+      ),
+      // A body image enlarged (spec 5.4): a modal dialog, over the whole
+      // window. Inside .mpv, so it takes the host's font like the rest.
+      h(
+        'dialog',
+        { class: 'mpv-zoom', part: 'image-zoom' },
+        h(
+          'figure',
+          { class: 'mpv-zoom-figure' },
+          h('img', { class: 'mpv-zoom-image', part: 'image-zoom-image', alt: '' }),
+          h('figcaption', { class: 'mpv-zoom-caption', part: 'image-zoom-caption', hidden: true }),
+        ),
+        h('button', { type: 'button', class: 'mpv-zoom-close', part: 'image-zoom-close' }, ICONS.close()),
       ),
     ),
   ];
@@ -335,6 +357,14 @@ export class MdPagesViewerElement extends HTMLElement {
   #tocHold = null;
   // The heading shown for a moment on arriving there (see #markTarget).
   #target = null;
+  // Enlarging body images (spec 5.4): which can be enlarged follows their
+  // size (#updateZoomable); the attributes put on each to make it a control,
+  // so that only ours are taken off again; the image enlarged now.
+  #zoomObserver = new ResizeObserver((entries) => {
+    for (const entry of entries) this.#updateZoomable(entry.target);
+  });
+  #zoomAdded = new WeakMap();
+  #zoomFrom = null;
   #spyFrame = 0;
   // Scroll events do not cross shadow boundaries, so both our own shadow
   // root (the body column) and the document (the window and host elements)
@@ -380,6 +410,14 @@ export class MdPagesViewerElement extends HTMLElement {
     if (this.shadowRoot.activeElement !== this.#ui.search) return;
     event.preventDefault();
   };
+  // While an image is enlarged, Esc closes it, wherever the focus is, and
+  // nothing else: the host's own Esc (closing a help panel, say) sees the
+  // key as taken. Listened to on the window, in the capture phase.
+  #onZoomKey = (event) => {
+    if (event.key !== 'Escape' || !this.#ui.zoom.open) return;
+    event.preventDefault();
+    this.#closeZoom();
+  };
 
   constructor() {
     super();
@@ -424,6 +462,10 @@ export class MdPagesViewerElement extends HTMLElement {
       sidebarHead: $('.mpv-sidebar .mpv-column-head'),
       tocHead: $('.mpv-toc .mpv-column-head'),
       tocSummary: $('.mpv-toc-mobile summary'),
+      zoom: $('.mpv-zoom'),
+      zoomImage: $('.mpv-zoom-image'),
+      zoomCaption: $('.mpv-zoom-caption'),
+      zoomClose: $('.mpv-zoom-close'),
     };
     this.#putTexts();
     root.addEventListener(
@@ -451,6 +493,7 @@ export class MdPagesViewerElement extends HTMLElement {
       this.#updateToolbar();
       this.#updateFollow();
     });
+    this.#listenZoom();
   }
 
   // ---- options ----
@@ -545,6 +588,9 @@ export class MdPagesViewerElement extends HTMLElement {
     if (this.#spyFrame) cancelAnimationFrame(this.#spyFrame);
     this.#spyFrame = 0;
     this.#releaseToc(false);
+    // Taken out of the page, a modal dialog leaves the top layer but stays
+    // open: it would come back as part of the page.
+    this.#closeZoom();
     if (this.#searchPrep && this.#searchPrep.timer) {
       clearTimeout(this.#searchPrep.timer);
       this.#searchPrep.timer = 0;
@@ -642,6 +688,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#model = null;
     this.#displayed = null;
     this.#clearBodyCache();
+    this.#closeZoom();
     this.#ui.status.hidden = true;
     this.#ui.layout.hidden = true;
   }
@@ -816,6 +863,9 @@ export class MdPagesViewerElement extends HTMLElement {
       label(button, 'title', button.dataset.mpvIcon);
     }
     ui.viewToggle.textContent = this.#text(this.#childView === 'list' ? 'viewCard' : 'viewList');
+    label(ui.zoom, 'aria-label', 'zoomed');
+    label(ui.zoomClose, 'aria-label', 'zoomClose');
+    label(ui.zoomClose, 'title', 'zoomClose');
   }
 
   /**
@@ -1015,6 +1065,7 @@ export class MdPagesViewerElement extends HTMLElement {
     }
     this.#markChildIndex(false);
     this.#putBody(fragment, how);
+    this.#watchZoomable();
     this.#renderPager(page);
   }
 
@@ -1199,6 +1250,7 @@ export class MdPagesViewerElement extends HTMLElement {
   }
 
   #putBody(fragment, how) {
+    this.#forgetZoomable();
     this.#ui.bodyStatus.hidden = true;
     this.#ui.content.hidden = false;
     this.#ui.content.replaceChildren(fragment);
@@ -1211,6 +1263,123 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#setToc(toc);
     this.#scroll(how, true);
     this.#updateTocCurrent();
+  }
+
+  // ---- enlarging body images (spec 5.4) ----
+
+  #listenZoom() {
+    const ui = this.#ui;
+    // Enter or Space on an image that can be enlarged, as on a button.
+    ui.content.addEventListener('keydown', (event) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return;
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || !this.#canZoom(event.target)) return;
+      event.preventDefault();
+      this.#openZoom(event.target);
+    });
+    // A click anywhere but on the image closes it: the close button, the
+    // dark area around (the dialog itself), the caption.
+    ui.zoom.addEventListener('click', (event) => {
+      if (event.target !== ui.zoomImage) this.#closeZoom();
+    });
+    ui.zoom.addEventListener('close', () => this.#onZoomClosed());
+    // The page behind does not scroll under it. Ctrl with the wheel (and a
+    // pinch on a touchpad) still zooms the page.
+    ui.zoom.addEventListener(
+      'wheel',
+      (event) => {
+        if (!event.ctrlKey) event.preventDefault();
+      },
+      { passive: false },
+    );
+  }
+
+  /** Follows the images of a body just put in (see #updateZoomable). Images that are part of a control are left out. */
+  #watchZoomable() {
+    for (const img of this.#ui.content.querySelectorAll('img')) {
+      if (img.closest(IMAGE_CONTROLS) || img.hasAttribute('usemap')) continue;
+      // Its size may stay the same when it loads (width and height given).
+      img.addEventListener('load', () => this.#updateZoomable(img));
+      this.#zoomObserver.observe(img);
+    }
+  }
+
+  /** The body is going: an image enlarged from it closes, and its images are no longer followed. */
+  #forgetZoomable() {
+    this.#closeZoom();
+    this.#zoomObserver.disconnect();
+  }
+
+  /**
+   * An image of the body can be enlarged while it is shown smaller than it
+   * is: narrowed to the body, or by its own width and height. It is then a
+   * control, focusable and named as a button; attributes of these the body
+   * gave it are left as they are, and only ours are taken off again.
+   */
+  #updateZoomable(img) {
+    // width and height: the size shown (CSS pixels), while it is shown.
+    const shrunk = img.naturalWidth > 0 && (img.naturalWidth > img.width + 1 || img.naturalHeight > img.height + 1);
+    const on = shrunk && this.#ui.content.contains(img);
+    if (on === img.hasAttribute('data-mpv-zoom')) return;
+    if (on) {
+      const added = [];
+      for (const [name, value] of [['tabindex', '0'], ['role', 'button'], ['aria-label', this.#text('zoomImage', img.alt.trim())]]) {
+        if (img.hasAttribute(name)) continue;
+        img.setAttribute(name, value);
+        added.push(name);
+      }
+      this.#zoomAdded.set(img, added);
+      img.setAttribute('data-mpv-zoom', '');
+    } else {
+      for (const name of this.#zoomAdded.get(img) ?? []) img.removeAttribute(name);
+      this.#zoomAdded.delete(img);
+      img.removeAttribute('data-mpv-zoom');
+    }
+  }
+
+  /** Whether `node` is an image of the body that can be enlarged now (checked again: its size may have just changed). */
+  #canZoom(node) {
+    if (!(node instanceof Element) || node.localName !== 'img' || !node.hasAttribute('data-mpv-zoom')) return false;
+    this.#updateZoomable(node);
+    return node.hasAttribute('data-mpv-zoom');
+  }
+
+  /**
+   * Shows `img` over the whole window (spec 5.4): the picture the body shows
+   * (with srcset, the one the browser chose), at its own size or smaller to
+   * fit, its alternative text below, and a button to close it.
+   */
+  #openZoom(img) {
+    const ui = this.#ui;
+    if (ui.zoom.open) return;
+    const caption = img.alt.trim();
+    ui.zoomImage.src = img.currentSrc || img.src;
+    ui.zoomCaption.textContent = caption;
+    ui.zoomCaption.hidden = caption === '';
+    try {
+      ui.zoom.showModal();
+    } catch (error) {
+      warn(`Could not enlarge the image: ${error.message}`);
+      ui.zoomImage.removeAttribute('src');
+      return;
+    }
+    this.#zoomFrom = img;
+    window.addEventListener('keydown', this.#onZoomKey, true);
+    ui.zoomClose.focus();
+  }
+
+  #closeZoom() {
+    if (this.#ui.zoom.open) this.#ui.zoom.close();
+  }
+
+  /** After the enlarged image has closed, however it was closed (by us, or by the browser on a close request). */
+  #onZoomClosed() {
+    if (this.#ui.zoom.open) return; // opened again before the event came
+    window.removeEventListener('keydown', this.#onZoomKey, true);
+    this.#ui.zoomImage.removeAttribute('src');
+    const from = this.#zoomFrom;
+    this.#zoomFrom = null;
+    // Back to the image it came from, while the body still has it.
+    if (from && this.#ui.content.contains(from) && from.hasAttribute('data-mpv-zoom')) from.focus({ preventScroll: true });
   }
 
   // ---- scrolling (spec 5.5) ----
@@ -1543,6 +1712,10 @@ export class MdPagesViewerElement extends HTMLElement {
       this.#closeSidebar();
       return;
     }
+    if (inBody && !event.defaultPrevented && this.#canZoom(target)) {
+      this.#openZoom(target);
+      return;
+    }
 
     const link = target.closest('a[href], area[href]');
     if (!link || event.defaultPrevented) return;
@@ -1849,6 +2022,7 @@ export class MdPagesViewerElement extends HTMLElement {
   }
 
   #showBodyStatus(key, retry) {
+    this.#forgetZoomable();
     this.#markChildIndex(false);
     this.#renderPager(null);
     this.#updateToolbar();

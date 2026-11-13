@@ -4,7 +4,8 @@
 
 /**
  * Every key a locale has. A function takes the number or the search words
- * it shows (`toggle` takes the page's title); every other value is a string.
+ * it shows (`toggle` takes the page's title, `zoomImage` the image's
+ * alternative text, "" when it has none); every other value is a string.
  */
 const JA = {
   loading: '読み込み中…',
@@ -38,6 +39,9 @@ const JA = {
   calloutImportant: '重要',
   calloutWarning: '注意',
   calloutCaution: '警告',
+  zoomImage: (alt) => (alt ? `画像を拡大：${alt}` : '画像を拡大'),
+  zoomed: '拡大した画像',
+  zoomClose: '閉じる',
 };
 
 const EN = {
@@ -72,6 +76,9 @@ const EN = {
   calloutImportant: 'Important',
   calloutWarning: 'Warning',
   calloutCaution: 'Caution',
+  zoomImage: (alt) => (alt ? `Enlarge image: ${alt}` : 'Enlarge image'),
+  zoomed: 'Enlarged image',
+  zoomClose: 'Close',
 };
 
 const ZH_CN = {
@@ -106,6 +113,9 @@ const ZH_CN = {
   calloutImportant: '重要',
   calloutWarning: '注意',
   calloutCaution: '警告',
+  zoomImage: (alt) => (alt ? `放大图片：${alt}` : '放大图片'),
+  zoomed: '放大的图片',
+  zoomClose: '关闭',
 };
 
 const ZH_TW = {
@@ -140,6 +150,9 @@ const ZH_TW = {
   calloutImportant: '重要',
   calloutWarning: '注意',
   calloutCaution: '警告',
+  zoomImage: (alt) => (alt ? `放大圖片：${alt}` : '放大圖片'),
+  zoomed: '放大的圖片',
+  zoomClose: '關閉',
 };
 
 const KO = {
@@ -174,6 +187,9 @@ const KO = {
   calloutImportant: '중요',
   calloutWarning: '주의',
   calloutCaution: '경고',
+  zoomImage: (alt) => (alt ? `이미지 확대: ${alt}` : '이미지 확대'),
+  zoomed: '확대한 이미지',
+  zoomClose: '닫기',
 };
 
 export const DEFAULT_LOCALE = 'ja';
