@@ -90,6 +90,8 @@ const ICONS = {
     svg.setAttribute('stroke-width', '2.4');
     return svg;
   },
+  // After a related link that opens another site, in a new tab.
+  external: () => icon(['path', { d: 'M14 4h6v6' }], ['path', { d: 'M20 4l-9 9' }], ['path', { d: 'M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5' }]),
 };
 
 // How long "copied" stays by the button that copied a link to a heading (ms).
@@ -145,7 +147,14 @@ function buildParts() {
           h('article', { class: 'mpv-content', part: 'content' }),
           h('nav', { class: 'mpv-pager', part: 'pager', hidden: true }),
         ),
-        h('nav', { class: 'mpv-toc', part: 'toc', hidden: true }, h('div', { class: 'mpv-column-head' }), tocList()),
+        h(
+          'nav',
+          { class: 'mpv-toc', part: 'toc', hidden: true },
+          h('div', { class: 'mpv-column-head' }),
+          tocList(),
+          // The page's related links, under the table of contents (spec 5.4).
+          h('nav', { class: 'mpv-related', part: 'related', hidden: true }, h('div', { class: 'mpv-related-head', part: 'related-head' }), h('ul', { class: 'mpv-related-list' })),
+        ),
         h('div', { class: 'mpv-backdrop' }),
       ),
       // A body image enlarged (spec 5.4): a modal dialog, over the whole
@@ -485,6 +494,9 @@ export class MdPagesViewerElement extends HTMLElement {
       zoomCaption: $('.mpv-zoom-caption'),
       zoomClose: $('.mpv-zoom-close'),
       live: $('.mpv-live'),
+      related: $('.mpv-toc .mpv-related'),
+      relatedHead: $('.mpv-toc .mpv-related-head'),
+      relatedList: $('.mpv-toc .mpv-related-list'),
     };
     this.#putTexts();
     root.addEventListener(
@@ -883,6 +895,8 @@ export class MdPagesViewerElement extends HTMLElement {
     }
     ui.viewToggle.textContent = this.#text(this.#childView === 'list' ? 'viewCard' : 'viewList');
     label(ui.zoom, 'aria-label', 'zoomed');
+    label(ui.related, 'aria-label', 'related');
+    ui.relatedHead.textContent = this.#text('related');
     label(ui.zoomClose, 'aria-label', 'zoomClose');
     label(ui.zoomClose, 'title', 'zoomClose');
   }
@@ -1042,8 +1056,9 @@ export class MdPagesViewerElement extends HTMLElement {
     if (text !== undefined) this.#renderBody(page, text, { scroll: 'none' });
   }
 
-  #renderBody(page, markdown, how) {
-    const options = {
+  /** How images and links of a body (and its related links) are resolved (spec 5.3). */
+  #linkOptions() {
+    return {
       paramName: this.#linkParamName(),
       baseUrl: this.#options.baseUrl,
       documentUrl: document.baseURI, // what fetch resolves src against
@@ -1051,6 +1066,10 @@ export class MdPagesViewerElement extends HTMLElement {
       pageOrigin: location.origin,
       imageResolver: this.#options.imageResolver,
     };
+  }
+
+  #renderBody(page, markdown, how) {
+    const options = this.#linkOptions();
     let fragment;
     try {
       fragment = renderMarkdown(markdown, {
@@ -1087,6 +1106,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#watchZoomable();
     this.#addHeadingLinks();
     this.#addUpdated(page);
+    this.#renderRelated(page, options);
     this.#renderPager(page);
   }
 
@@ -1272,6 +1292,7 @@ export class MdPagesViewerElement extends HTMLElement {
 
   #putBody(fragment, how) {
     this.#forgetZoomable();
+    this.#ui.related.hidden = true;
     this.#ui.bodyStatus.hidden = true;
     this.#ui.content.hidden = false;
     this.#ui.content.replaceChildren(fragment);
@@ -1427,6 +1448,78 @@ export class MdPagesViewerElement extends HTMLElement {
   #dateLocale() {
     const { locale } = this.#options;
     return (typeof locale === 'string' && locale.trim() !== '' && findLocale(locale)) || DEFAULT_LOCALE;
+  }
+
+  // ---- related links (spec 5.4) ----
+
+  /**
+   * The page's related links, headed "関連リソース": under the table of
+   * contents in the right column, and the same list at the end of the body,
+   * shown instead where that column is not (a narrow element, the column
+   * closed, a page with no headings for it; styles.css). None on a page
+   * without them.
+   */
+  #renderRelated(page, options) {
+    const links = this.#relatedLinks(page, options);
+    this.#ui.relatedList.replaceChildren(...links.map((link) => this.#relatedItem(link)));
+    this.#ui.related.hidden = links.length === 0 || this.#tocItems.length === 0;
+    if (links.length === 0) return;
+    const label = this.#text('related');
+    const body = h(
+      'nav',
+      { class: 'mpv-related mpv-related-body', part: 'related', 'aria-label': label },
+      h('div', { class: 'mpv-related-head', part: 'related-head' }, label),
+      h('ul', { class: 'mpv-related-list' }, ...links.map((link) => this.#relatedItem(link))),
+    );
+    if (this.#tocItems.length === 0) body.setAttribute('data-mpv-only', '');
+    this.#ui.content.append(body);
+  }
+
+  /**
+   * Where each related link leads, as the same href in the body would
+   * (spec 5.3): a page of this list (named by its title unless one is
+   * given), a heading of this page, a page of the host's site, another site
+   * (in a new tab), or mailto:/tel:. Others, and pages not in the list, are
+   * warned about and left out.
+   */
+  #relatedLinks(page, options) {
+    const links = [];
+    for (const { title, href } of page.related) {
+      const link = classifyLink(href, page, this.#model, options);
+      if (link.type === 'page') {
+        const target = this.#model.get(link.id);
+        if (!target) {
+          warn(`related "${href}" of page "${page.id}" leads to page "${link.id}", which does not exist; it is not shown.`);
+          continue;
+        }
+        // Both ways a click is read: out of the body (the right column) and in it.
+        const data = { mpvNav: link.id, mpvLink: 'page', mpvId: link.id };
+        if (link.hash) Object.assign(data, { mpvNavHash: link.hash, mpvHash: link.hash });
+        links.push({ text: title ?? target.title, href: pageUrl(location.href, options.paramName, link.id, link.hash), data });
+      } else if (link.type === 'hash') {
+        links.push({ text: title ?? link.hash, href: `#${encodeURIComponent(link.hash)}`, data: { mpvToc: link.hash, mpvLink: 'hash', mpvHash: link.hash } });
+      } else if (link.type === 'external') {
+        links.push({ text: title ?? link.url, href: link.url, external: true });
+      } else if (link.type === 'navigate') {
+        links.push({ text: title ?? link.url, href: link.url });
+      } else if (/^(mailto|tel):/i.test(href)) {
+        links.push({ text: title ?? href.replace(/^(mailto|tel):/i, ''), href });
+      } else {
+        warn(`related "${href}" of page "${page.id}" is not a page, a #heading, an http(s) URL, mailto: or tel:; it is not shown.`);
+      }
+    }
+    return links;
+  }
+
+  #relatedItem({ text, href, data = {}, external = false }) {
+    const link = h('a', { href, part: 'related-link' }, text);
+    for (const [key, value] of Object.entries(data)) link.dataset[key] = value;
+    if (external) {
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.append(ICONS.external(), h('span', { class: 'mpv-new-tab' }, this.#text('newTab')));
+    }
+    return h('li', {}, link);
   }
 
   // ---- links to headings (spec 5.4) ----
@@ -2198,6 +2291,7 @@ export class MdPagesViewerElement extends HTMLElement {
 
   #showBodyStatus(key, retry) {
     this.#forgetZoomable();
+    this.#ui.related.hidden = true;
     this.#markChildIndex(false);
     this.#renderPager(null);
     this.#updateToolbar();

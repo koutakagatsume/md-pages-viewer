@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildModel, parseUpdatedAt, resolveInitialPage } from '../../src/pages.js';
+import { buildModel, parseRelated, parseUpdatedAt, resolveInitialPage } from '../../src/pages.js';
 
 const collect = () => {
   const warnings = [];
@@ -176,4 +176,24 @@ test('updatedAt is kept on the page; one that is not a date is warned about and 
   assert.equal(model.get('b').updatedAt, null);
   assert.equal(model.get('c').updatedAt, null);
   assert.deepEqual(warnings, ['updatedAt of page "b" is not a date (YYYY-MM-DD, or a date and time such as 2026-11-14T10:30:00+09:00); it is not shown.']);
+});
+
+test('related: entries keep a trimmed href and title (null when not given); missing is none; not an array or no href is warned about and left out', () => {
+  const { warnings, warn } = collect();
+  assert.deepEqual(parseRelated(undefined, 'p', warn), []);
+  assert.deepEqual(parseRelated(null, 'p', warn), []);
+  assert.deepEqual(
+    parseRelated([{ href: ' ?page=b ' }, { title: ' C ', href: 'https://example.com' }, { title: '', href: '#x' }, { title: 3, href: 'mailto:a@example.com' }, { title: 'なし' }, { href: '   ' }, 'just a string', null], 'p', warn),
+    [{ title: null, href: '?page=b' }, { title: 'C', href: 'https://example.com' }, { title: null, href: '#x' }, { title: '3', href: 'mailto:a@example.com' }],
+  );
+  assert.deepEqual(parseRelated({ href: '?page=b' }, 'q', warn), []);
+  assert.deepEqual(warnings, [
+    'related[4] of page "p" has no href; it is not shown.',
+    'related[5] of page "p" has no href; it is not shown.',
+    'related[6] of page "p" has no href; it is not shown.',
+    'related[7] of page "p" has no href; it is not shown.',
+    'related of page "q" is not an array; it is not shown.',
+  ]);
+  assert.deepEqual(buildModel([{ id: 'a', parentId: null, title: 'A', md: '', related: [{ href: '?page=b' }] }]).get('a').related, [{ title: null, href: '?page=b' }]);
+  assert.deepEqual(buildModel([{ id: 'a', parentId: null, title: 'A', md: '' }]).get('a').related, []);
 });

@@ -624,6 +624,96 @@
   margin-top: 0.4em;
 }
 
+/* ---- related links (spec 5.4) ---- */
+
+/* Under the table of contents in the right column: a head like the column's
+   ("目次"), then the links in the accent colour. */
+.mpv-related-head {
+  display: flex;
+  align-items: center;
+  height: calc(var(--_space) * 2.25);
+  padding: 0 calc(var(--_space) * 0.9);
+  border-top: 1px solid var(--_border);
+  border-bottom: 1px solid var(--_border);
+  color: var(--_muted);
+  font-size: 0.8em;
+}
+
+.mpv-related-list {
+  list-style: none;
+  margin: 0;
+  padding: calc(var(--_space) * 0.5) calc(var(--_space) * 0.5) var(--_space);
+  font-size: 0.875em;
+}
+
+.mpv-related-list a {
+  display: block;
+  padding: 0.15em 0 0.15em 0.6em;
+  color: var(--_accent);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.mpv-related-list a:hover {
+  text-decoration: underline;
+}
+
+.mpv-related-list svg {
+  width: 0.85em;
+  height: 0.85em;
+  margin-left: 0.25em;
+  vertical-align: -0.05em;
+}
+
+/* "Opens in a new tab", told to screen readers only. */
+.mpv-related .mpv-new-tab {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* The same list at the end of the body, in a box: shown only where the right
+   column is not (the column closed, a page with no headings for it, and a
+   narrow element below). */
+.mpv-content .mpv-related-body {
+  display: none;
+  margin: calc(var(--_space) * 2) 0 0;
+  padding: calc(var(--_space) * 0.75) var(--_space);
+  border: 1px solid var(--_border);
+  border-radius: 8px;
+}
+
+.mpv[data-toc-closed] .mpv-content .mpv-related-body,
+.mpv-content .mpv-related-body[data-mpv-only] {
+  display: block;
+}
+
+.mpv-content .mpv-related-body .mpv-related-head {
+  height: auto;
+  padding: 0 0 0.4em;
+  border: 0;
+  font-size: 0.85em;
+  font-weight: 700;
+}
+
+.mpv-content .mpv-related-body .mpv-related-list {
+  padding: 0;
+  font-size: 0.95em;
+}
+
+.mpv-content .mpv-related-body .mpv-related-list a {
+  padding-left: 0;
+}
+
+@container (max-width: 767.98px) {
+  .mpv-content .mpv-related-body {
+    display: block;
+  }
+}
+
 .mpv-backdrop {
   display: none;
 }

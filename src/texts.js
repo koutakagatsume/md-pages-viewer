@@ -48,6 +48,8 @@ const JA = {
   linkCopied: 'リンクをコピーしました',
   copyFailed: 'コピーできませんでした',
   updated: (date) => `最終更新：${date}`,
+  related: '関連リソース',
+  newTab: '（新しいタブで開く）',
 };
 
 const EN = {
@@ -89,6 +91,8 @@ const EN = {
   linkCopied: 'Link copied',
   copyFailed: 'Could not copy',
   updated: (date) => `Last updated: ${date}`,
+  related: 'Related resources',
+  newTab: ' (opens in a new tab)',
 };
 
 const ZH_CN = {
@@ -130,6 +134,8 @@ const ZH_CN = {
   linkCopied: '已复制链接',
   copyFailed: '无法复制',
   updated: (date) => `最后更新：${date}`,
+  related: '相关资源',
+  newTab: '（在新标签页中打开）',
 };
 
 const ZH_TW = {
@@ -171,6 +177,8 @@ const ZH_TW = {
   linkCopied: '已複製連結',
   copyFailed: '無法複製',
   updated: (date) => `最後更新：${date}`,
+  related: '相關資源',
+  newTab: '（在新分頁中開啟）',
 };
 
 const KO = {
@@ -212,6 +220,8 @@ const KO = {
   linkCopied: '링크를 복사했습니다',
   copyFailed: '복사할 수 없습니다',
   updated: (date) => `마지막 업데이트: ${date}`,
+  related: '관련 리소스',
+  newTab: ' (새 탭에서 열림)',
 };
 
 export const DEFAULT_LOCALE = 'ja';

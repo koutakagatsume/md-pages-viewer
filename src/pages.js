@@ -9,6 +9,32 @@ const DAY = /^(\d{4})-(\d{2})-(\d{2})/;
 const TIME = /^T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d{1,3})?)?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)?$/;
 
 /**
+ * A page's related links (spec 4): [{title, href}], title null where not
+ * given. Not an array, or an entry without an href, is warned about and left
+ * out. Where each href leads is decided when the page is shown, like a link
+ * in its body (spec 5.3).
+ * @returns {{title: string|null, href: string}[]}
+ */
+export function parseRelated(value, id, warn) {
+  if (isMissing(value)) return [];
+  if (!Array.isArray(value)) {
+    warn(`related of page "${id}" is not an array; it is not shown.`);
+    return [];
+  }
+  const list = [];
+  value.forEach((entry, index) => {
+    const href = entry && typeof entry === 'object' && typeof entry.href === 'string' ? entry.href.trim() : '';
+    if (href === '') {
+      warn(`related[${index}] of page "${id}" has no href; it is not shown.`);
+      return;
+    }
+    const title = isMissing(entry.title) ? '' : String(entry.title).trim();
+    list.push({ title: title === '' ? null : title, href });
+  });
+  return list;
+}
+
+/**
  * When a page was last updated (spec 4): {time, dateOnly, iso}; null when
  * not given (or blank); undefined when it is not a date. A date alone is a
  * day on the calendar, shown as written wherever the reader is (time: its
@@ -44,7 +70,7 @@ export function parseUpdatedAt(value) {
  */
 export function buildModel(input, warn = () => {}) {
   // md and src both null: the page has no body; it shows its child pages (spec 5.4).
-  /** @type {Map<string, {id: string, parentId: string|null, title: string, description: string|null, thumbnail: string|null, updatedAt: {time: number, dateOnly: boolean, iso: string}|null, md: string|null, src: string|null, order: number|null, index: number, raw: object}>} */
+  /** @type {Map<string, {id: string, parentId: string|null, title: string, description: string|null, thumbnail: string|null, updatedAt: {time: number, dateOnly: boolean, iso: string}|null, related: {title: string|null, href: string}[], md: string|null, src: string|null, order: number|null, index: number, raw: object}>} */
   const byId = new Map();
   const list = Array.isArray(input) ? input : [];
 
@@ -80,6 +106,8 @@ export function buildModel(input, warn = () => {}) {
       thumbnail: isMissing(raw.thumbnail) || String(raw.thumbnail).trim() === '' ? null : String(raw.thumbnail).trim(),
       // When the page was last updated, shown at the end of its body (spec 5.4).
       updatedAt: updatedAt ?? null,
+      // Links to related pages and resources, shown with the body (spec 5.4).
+      related: parseRelated(raw.related, id, warn),
       md,
       src,
       order: typeof raw.order === 'number' && Number.isFinite(raw.order) ? raw.order : null,
