@@ -799,6 +799,112 @@
   font-size: 1.05em;
 }
 
+/* The button at the end of each heading of the body that copies a link to
+   it (spec 5.4). Seen while the heading is pointed at, while it has the
+   keyboard focus, and for a moment after a copy; faint all the time where
+   nothing can point (touch screens). Sizes follow the heading's. The
+   negative margins keep it out of the line's height: a heading is exactly as
+   tall as without it, so nothing below moves. */
+.mpv-content .mpv-heading-link {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 1.4em;
+  height: 1.4em;
+  margin: -0.3em 0 -0.3em 0.3em;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  vertical-align: middle;
+  background: transparent;
+  color: var(--_muted);
+  font: inherit;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+
+.mpv-content .mpv-heading-link svg {
+  width: 0.75em;
+  height: 0.75em;
+}
+
+.mpv-content :is(h2, h3, h4, h5, h6):hover > .mpv-heading-link,
+.mpv-content .mpv-heading-link:focus-visible,
+.mpv-content .mpv-heading-link[data-mpv-copied] {
+  opacity: 1;
+}
+
+.mpv-content .mpv-heading-link:hover,
+.mpv-content .mpv-heading-link:focus-visible,
+.mpv-content .mpv-heading-link[data-mpv-copied] {
+  color: var(--_accent);
+  background: var(--_tint);
+}
+
+.mpv-content .mpv-heading-link:focus-visible {
+  outline: 2px solid var(--_accent);
+  outline-offset: 1px;
+}
+
+@media (hover: none) {
+  .mpv-content .mpv-heading-link {
+    opacity: 0.45;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mpv-content .mpv-heading-link {
+    transition: none;
+  }
+}
+
+/* "Copied" beside the button: to its right, or to its left where the body
+   has no room on the right. */
+.mpv-content .mpv-heading-link-tip {
+  position: absolute;
+  top: 50%;
+  left: calc(100% + 6px);
+  z-index: 5;
+  translate: 0 -50%;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: #111827;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.mpv-content .mpv-heading-link-tip[data-mpv-side='left'] {
+  left: auto;
+  right: calc(100% + 6px);
+}
+
+/* Told to screen readers only. */
+.mpv-live {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+/* Where the older copy command takes its text from; never seen. */
+.mpv-copy-area {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+}
+
 .mpv-content p,
 .mpv-content ul,
 .mpv-content ol,

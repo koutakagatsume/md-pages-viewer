@@ -79,7 +79,21 @@ const ICONS = {
     for (const [name, value] of [['width', '20'], ['height', '20'], ['stroke-width', '2.4']]) svg.setAttribute(name, value);
     return svg;
   },
+  // The button that copies a link to a heading, and what it shows once copied.
+  link: () => {
+    const svg = icon(['path', { d: 'M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.5' }], ['path', { d: 'M14 11a5 5 0 0 0-7.07 0l-2.83 2.83a5 5 0 0 0 7.07 7.07l1.33-1.33' }]);
+    svg.setAttribute('stroke-width', '2.2');
+    return svg;
+  },
+  copied: () => {
+    const svg = icon(['path', { d: 'M5 12.5l4.5 4.5L19 7.5' }]);
+    svg.setAttribute('stroke-width', '2.4');
+    return svg;
+  },
 };
+
+// How long "copied" stays by the button that copied a link to a heading (ms).
+const COPIED_TIME = 1500;
 
 // A body image inside one of these is part of a control: a click on it is
 // the control's (a link opens), so it is never enlarged (spec 5.4).
@@ -147,6 +161,8 @@ function buildParts() {
         ),
         h('button', { type: 'button', class: 'mpv-zoom-close', part: 'image-zoom-close' }, ICONS.close()),
       ),
+      // What screen readers are told after a link to a heading is copied.
+      h('div', { class: 'mpv-live', role: 'status' }),
     ),
   ];
 }
@@ -365,6 +381,8 @@ export class MdPagesViewerElement extends HTMLElement {
   });
   #zoomAdded = new WeakMap();
   #zoomFrom = null;
+  // The button that copied a link to a heading -> the timer that puts it back.
+  #copyTimers = new WeakMap();
   #spyFrame = 0;
   // Scroll events do not cross shadow boundaries, so both our own shadow
   // root (the body column) and the document (the window and host elements)
@@ -466,6 +484,7 @@ export class MdPagesViewerElement extends HTMLElement {
       zoomImage: $('.mpv-zoom-image'),
       zoomCaption: $('.mpv-zoom-caption'),
       zoomClose: $('.mpv-zoom-close'),
+      live: $('.mpv-live'),
     };
     this.#putTexts();
     root.addEventListener(
@@ -1066,6 +1085,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#markChildIndex(false);
     this.#putBody(fragment, how);
     this.#watchZoomable();
+    this.#addHeadingLinks();
     this.#renderPager(page);
   }
 
@@ -1380,6 +1400,89 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#zoomFrom = null;
     // Back to the image it came from, while the body still has it.
     if (from && this.#ui.content.contains(from) && from.hasAttribute('data-mpv-zoom')) from.focus({ preventScroll: true });
+  }
+
+  // ---- links to headings (spec 5.4) ----
+
+  /**
+   * A button at the end of each heading of the body (h2 to h6) that copies a
+   * link to it: the host page's URL opening this page at that heading. None
+   * while the URL does not follow the page (urlParam false): such a link
+   * would not open it. Added after the table of contents has read the
+   * headings' words.
+   */
+  #addHeadingLinks() {
+    if (!this.#paramName()) return;
+    for (const heading of this.#ui.content.querySelectorAll('h2[id], h3[id], h4[id], h5[id], h6[id]')) {
+      const label = this.#text('copyLink', heading.textContent.trim());
+      heading.append(h('button', { type: 'button', class: 'mpv-heading-link', part: 'heading-link', 'aria-label': label, title: label }, ICONS.link()));
+    }
+  }
+
+  async #copyHeadingLink(button) {
+    const heading = button.parentElement;
+    const shown = this.#displayed;
+    const name = this.#paramName();
+    if (!heading || !shown || shown.kind !== 'page' || !name) return;
+    const ok = await this.#copyText(pageUrl(location.href, name, shown.id, heading.id));
+    if (this.#ui.content.contains(button)) this.#showCopied(button, ok);
+  }
+
+  /**
+   * Puts `text` on the clipboard. Where the Clipboard API is missing or
+   * refuses (a page not served over https, a frame not allowed to write),
+   * the older copy command is tried, on a text area of our own.
+   */
+  async #copyText(text) {
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch {
+      // The older way below.
+    }
+    const focused = this.shadowRoot.activeElement;
+    const area = h('textarea', { class: 'mpv-copy-area', readonly: '', tabindex: '-1', 'aria-hidden': 'true' });
+    area.value = text;
+    this.#ui.frame.append(area);
+    area.focus({ preventScroll: true });
+    area.select();
+    let ok = false;
+    try {
+      ok = document.execCommand('copy');
+    } catch {
+      ok = false;
+    }
+    area.remove();
+    if (focused instanceof HTMLElement && focused.isConnected) focused.focus({ preventScroll: true });
+    return ok;
+  }
+
+  /**
+   * After a copy: the button shows a check (or its link again, if the copy
+   * failed) with a short note beside it, for a moment, and screen readers
+   * are told the same.
+   */
+  #showCopied(button, ok) {
+    clearTimeout(this.#copyTimers.get(button));
+    const message = this.#text(ok ? 'linkCopied' : 'copyFailed');
+    const tip = h('span', { class: 'mpv-heading-link-tip', part: 'heading-link-tip', 'aria-hidden': 'true' }, message);
+    button.replaceChildren(ok ? ICONS.copied() : ICONS.link(), tip);
+    button.setAttribute('data-mpv-copied', ok ? 'done' : 'failed');
+    // Kept inside the body: to the left of the button where the right has no room.
+    if (tip.getBoundingClientRect().right > this.#ui.content.getBoundingClientRect().right) tip.setAttribute('data-mpv-side', 'left');
+    const live = this.#ui.live;
+    live.textContent = '';
+    live.textContent = message;
+    this.#copyTimers.set(
+      button,
+      setTimeout(() => {
+        button.replaceChildren(ICONS.link());
+        button.removeAttribute('data-mpv-copied');
+        if (live.textContent === message) live.textContent = '';
+      }, COPIED_TIME),
+    );
   }
 
   // ---- scrolling (spec 5.5) ----
@@ -1746,6 +1849,14 @@ export class MdPagesViewerElement extends HTMLElement {
     }
     if (target === this.#ui.backdrop) {
       this.#closeSidebar();
+      return;
+    }
+    // Ours only: the body cannot carry class names that start with "mpv-".
+    const copy = inBody ? target.closest('.mpv-heading-link') : null;
+    if (copy) {
+      // A heading inside a link: the click copies, it does not follow the link.
+      event.preventDefault();
+      this.#copyHeadingLink(copy);
       return;
     }
     if (inBody && !event.defaultPrevented && this.#canZoom(target)) {

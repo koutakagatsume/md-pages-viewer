@@ -5,7 +5,8 @@
 /**
  * Every key a locale has. A function takes the number or the search words
  * it shows (`toggle` takes the page's title, `zoomImage` the image's
- * alternative text, "" when it has none); every other value is a string.
+ * alternative text, "" when it has none, `copyLink` the heading's words);
+ * every other value is a string.
  */
 const JA = {
   loading: '読み込み中…',
@@ -42,6 +43,9 @@ const JA = {
   zoomImage: (alt) => (alt ? `画像を拡大：${alt}` : '画像を拡大'),
   zoomed: '拡大した画像',
   zoomClose: '閉じる',
+  copyLink: (title) => `「${title}」へのリンクをコピー`,
+  linkCopied: 'リンクをコピーしました',
+  copyFailed: 'コピーできませんでした',
 };
 
 const EN = {
@@ -79,6 +83,9 @@ const EN = {
   zoomImage: (alt) => (alt ? `Enlarge image: ${alt}` : 'Enlarge image'),
   zoomed: 'Enlarged image',
   zoomClose: 'Close',
+  copyLink: (title) => `Copy link to “${title}”`,
+  linkCopied: 'Link copied',
+  copyFailed: 'Could not copy',
 };
 
 const ZH_CN = {
@@ -116,6 +123,9 @@ const ZH_CN = {
   zoomImage: (alt) => (alt ? `放大图片：${alt}` : '放大图片'),
   zoomed: '放大的图片',
   zoomClose: '关闭',
+  copyLink: (title) => `复制“${title}”的链接`,
+  linkCopied: '已复制链接',
+  copyFailed: '无法复制',
 };
 
 const ZH_TW = {
@@ -153,6 +163,9 @@ const ZH_TW = {
   zoomImage: (alt) => (alt ? `放大圖片：${alt}` : '放大圖片'),
   zoomed: '放大的圖片',
   zoomClose: '關閉',
+  copyLink: (title) => `複製「${title}」的連結`,
+  linkCopied: '已複製連結',
+  copyFailed: '無法複製',
 };
 
 const KO = {
@@ -190,6 +203,9 @@ const KO = {
   zoomImage: (alt) => (alt ? `이미지 확대: ${alt}` : '이미지 확대'),
   zoomed: '확대한 이미지',
   zoomClose: '닫기',
+  copyLink: (title) => `“${title}” 링크 복사`,
+  linkCopied: '링크를 복사했습니다',
+  copyFailed: '복사할 수 없습니다',
 };
 
 export const DEFAULT_LOCALE = 'ja';
