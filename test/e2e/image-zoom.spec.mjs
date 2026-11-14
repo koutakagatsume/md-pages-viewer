@@ -132,8 +132,9 @@ test('[表示/画像の拡大] 押すと、画面全体を暗くして画像を�
   expect((await zoomShown(viewer)).modal).toBe(true);
   await close.click();
   await expect(dialog(viewer)).toBeHidden();
-  expect((await zoomShown(viewer)).src).toBe(null);
-  expect(await focusedAlt(viewer)).toBe('大きい画像');
+  // 後片付け（画像を外し、元の画像に戻る）は、閉じたあとに届く close イベントで行う
+  await expect.poll(async () => (await zoomShown(viewer)).src).toBe(null);
+  await expect.poll(() => focusedAlt(viewer)).toBe('大きい画像');
 
   // Enter で開き、Esc で閉じる。組み込み先には、Esc は使われたもの（defaultPrevented）として届く
   await page.keyboard.press('Enter');
@@ -141,7 +142,7 @@ test('[表示/画像の拡大] 押すと、画面全体を暗くして画像を�
   await page.keyboard.press('Escape');
   await expect(dialog(viewer)).toBeHidden();
   expect(await page.evaluate(() => window.__hostEsc)).toEqual([true]);
-  expect(await focusedAlt(viewer)).toBe('大きい画像');
+  await expect.poll(() => focusedAlt(viewer)).toBe('大きい画像');
 
   // Space で開き、画像の外（左の暗いところ）を押すと閉じる
   await page.keyboard.press(' ');
