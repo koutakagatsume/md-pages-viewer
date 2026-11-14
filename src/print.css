@@ -1,0 +1,92 @@
+/* Printing (spec 6). Inside the viewer these rules apply in @media print
+   (element.js); on the page the PDF button opens they always do. Only the
+   page's body is printed, to its end and at the full width: where it is
+   (the parents and the page's name) on one line at the top, then the body,
+   its last update and its related links. The sidebar, the table of
+   contents, the search box, the buttons and the links to the previous and
+   next pages are left out. Nothing scrolls inside, so nothing is cut off;
+   a height the host set is let go of while printing. */
+
+:host {
+  height: auto !important;
+  max-height: none !important;
+}
+
+.mpv-sidebar,
+.mpv-toc,
+.mpv-toc-mobile,
+.mpv-pager,
+.mpv-backdrop,
+.mpv-search-box,
+.mpv-tool,
+.mpv-heading-link,
+.mpv-zoom {
+  display: none !important;
+}
+
+/* Dark text on white paper, whatever the theme on screen. */
+.mpv {
+  height: auto !important;
+  overflow: visible !important;
+  color: #111 !important;
+  background: transparent !important;
+}
+
+.mpv-layout,
+.mpv-main {
+  display: block !important;
+  height: auto !important;
+  overflow: visible !important;
+}
+
+.mpv-main {
+  padding: 0 !important;
+  border: 0 !important;
+}
+
+.mpv-toolbar {
+  position: static !important;
+  translate: none !important;
+  min-height: 0 !important;
+  padding: 0 0 8px !important;
+  border-bottom: 1px solid #9ca3af !important;
+  background: transparent !important;
+}
+
+.mpv-content {
+  contain: none !important;
+  overflow: visible !important;
+  padding-top: 16px !important;
+}
+
+/* A wide table is not cut off at the edge of a box that scrolls. */
+.mpv-content .mpv-table-scroll {
+  overflow: visible !important;
+}
+
+/* A heading is not left alone at the bottom of a page; a table row, an
+   image, a code block, a callout and the related links are not split. */
+.mpv-content :is(h1, h2, h3, h4, h5, h6) {
+  break-after: avoid;
+}
+
+.mpv-content :is(tr, img, pre, .mpv-callout, .mpv-related-body) {
+  break-inside: avoid;
+}
+
+.mpv-content .mpv-related-body {
+  display: block !important;
+}
+
+.mpv-related-list svg {
+  display: none;
+}
+
+/* On paper a link to another site cannot be followed: its URL is written
+   after it. */
+.mpv-content a[target='_blank']::after {
+  content: ' (' attr(href) ')';
+  color: #4b5563;
+  font-size: 0.85em;
+  overflow-wrap: anywhere;
+}

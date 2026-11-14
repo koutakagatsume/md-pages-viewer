@@ -314,20 +314,31 @@
 }
 
 .mpv-sidebar-toggle,
-.mpv-toc-toggle {
+.mpv-toc-toggle,
+.mpv-print-button,
+.mpv-markdown-button {
   width: 2.15em;
   padding: 0;
   color: var(--_muted);
 }
 
 .mpv-sidebar-toggle:hover,
-.mpv-toc-toggle:hover {
+.mpv-toc-toggle:hover,
+.mpv-print-button:hover,
+.mpv-markdown-button:hover {
   color: inherit;
 }
 
 .mpv-tool svg {
   width: 1.2em;
   height: 1.2em;
+}
+
+/* The PDF and Markdown icons carry letters: a little larger to read them. */
+.mpv-print-button svg,
+.mpv-markdown-button svg {
+  width: 1.45em;
+  height: 1.45em;
 }
 
 /* Where the page is: the parents on a small line, the page's name below.

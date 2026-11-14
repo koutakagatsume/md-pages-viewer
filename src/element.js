@@ -2,6 +2,7 @@
 // fetching (5.2), rendering (5.4, 6) and URL/scroll handling (5.5).
 
 import css from './styles.css';
+import printCss from './print.css';
 import { buildModel, resolveInitialPage } from './pages.js';
 import { classifyLink, decodeFragment, headingId, pageUrl, resolveImage } from './paths.js';
 import { renderMarkdown, safeImageUrl } from './markdown.js';
@@ -90,6 +91,23 @@ const ICONS = {
     svg.setAttribute('stroke-width', '2.4');
     return svg;
   },
+  // The toolbar's buttons that print the page (or save it as PDF) and download its Markdown.
+  pdf: () => {
+    const svg = icon(['path', { d: 'M6 2.5h8.5l4.5 4.5v14.5H6z' }], ['path', { d: 'M14.5 2.5V7H19' }]);
+    svg.setAttribute('stroke-width', '1.6');
+    const label = document.createElementNS(SVG_NS, 'text');
+    for (const [name, value] of Object.entries({ x: '12.5', y: '17.6', 'text-anchor': 'middle', 'font-size': '6.6', 'letter-spacing': '-0.2', 'font-weight': '700', 'font-family': 'Arial, sans-serif', fill: 'currentColor', stroke: 'none' })) {
+      label.setAttribute(name, value);
+    }
+    label.textContent = 'PDF';
+    svg.append(label);
+    return svg;
+  },
+  markdown: () => {
+    const svg = icon(['rect', { x: '1.5', y: '5.5', width: '21', height: '13', rx: '2' }], ['path', { d: 'M5 15V9l2.5 3L10 9v6' }], ['path', { d: 'M16 9v5.5' }], ['path', { d: 'M13.5 12.5l2.5 2.5 2.5-2.5' }]);
+    svg.setAttribute('stroke-width', '1.6');
+    return svg;
+  },
   // After a related link that opens another site, in a new tab.
   external: () => icon(['path', { d: 'M14 4h6v6' }], ['path', { d: 'M20 4l-9 9' }], ['path', { d: 'M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5' }]),
 };
@@ -130,6 +148,9 @@ function buildParts() {
             h('kbd', { class: 'mpv-search-key', 'aria-hidden': 'true' }, '/'),
             h('div', { class: 'mpv-search-results', part: 'search-results', role: 'region', hidden: true }),
           ),
+          // Shown with a page's body (spec 5.4).
+          h('button', { type: 'button', class: 'mpv-tool mpv-print-button', part: 'print-button', hidden: true }, ICONS.pdf()),
+          h('button', { type: 'button', class: 'mpv-tool mpv-markdown-button', part: 'markdown-button', hidden: true }, ICONS.markdown()),
           h('button', { type: 'button', class: 'mpv-tool mpv-view-toggle', part: 'view-toggle', hidden: true }),
           h('button', { type: 'button', class: 'mpv-tool mpv-toc-toggle', part: 'toc-toggle', 'data-mpv-icon': 'tocClose', hidden: true }, ICONS.tocClose()),
         ),
@@ -292,7 +313,9 @@ function assignHeadingIds(container, taken) {
 
 // Our rules sit in a cascade layer, so the CSS a host passes in `styles`
 // (unlayered) wins over them whatever the specificity (spec 5.8).
-const LIBRARY_CSS = `@layer md-pages-viewer {\n${css}\n}`;
+const LIBRARY_CSS = `@layer md-pages-viewer {\n${css}\n@media print {\n${printCss}\n}\n}`;
+// The page the PDF button opens is for printing: the same rules, always.
+const PRINT_PAGE_CSS = `@layer md-pages-viewer {\n${css}\n${printCss}\n}`;
 
 /** A constructed stylesheet holding `text`, or null where they are not supported. */
 function constructedSheet(text) {
@@ -472,6 +495,8 @@ export class MdPagesViewerElement extends HTMLElement {
       search: $('.mpv-search'),
       searchResults: $('.mpv-search-results'),
       viewToggle: $('.mpv-view-toggle'),
+      printButton: $('.mpv-print-button'),
+      markdownButton: $('.mpv-markdown-button'),
       tocToggle: $('.mpv-toc-toggle'),
       sidebar: $('.mpv-sidebar'),
       tree: $('.mpv-tree'),
@@ -895,6 +920,10 @@ export class MdPagesViewerElement extends HTMLElement {
     }
     ui.viewToggle.textContent = this.#text(this.#childView === 'list' ? 'viewCard' : 'viewList');
     label(ui.zoom, 'aria-label', 'zoomed');
+    for (const [button, key] of [[ui.printButton, 'printPage'], [ui.markdownButton, 'downloadMarkdown']]) {
+      label(button, 'aria-label', key);
+      label(button, 'title', key);
+    }
     label(ui.related, 'aria-label', 'related');
     ui.relatedHead.textContent = this.#text('related');
     label(ui.zoomClose, 'aria-label', 'zoomClose');
@@ -1107,6 +1136,8 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#addHeadingLinks();
     this.#addUpdated(page);
     this.#renderRelated(page, options);
+    this.#ui.printButton.hidden = false;
+    this.#ui.markdownButton.hidden = false;
     this.#renderPager(page);
   }
 
@@ -1293,6 +1324,8 @@ export class MdPagesViewerElement extends HTMLElement {
   #putBody(fragment, how) {
     this.#forgetZoomable();
     this.#ui.related.hidden = true;
+    this.#ui.printButton.hidden = true;
+    this.#ui.markdownButton.hidden = true;
     this.#ui.bodyStatus.hidden = true;
     this.#ui.content.hidden = false;
     this.#ui.content.replaceChildren(fragment);
@@ -1448,6 +1481,106 @@ export class MdPagesViewerElement extends HTMLElement {
   #dateLocale() {
     const { locale } = this.#options;
     return (typeof locale === 'string' && locale.trim() !== '' && findLocale(locale)) || DEFAULT_LOCALE;
+  }
+
+  // ---- printing and the Markdown of a page (spec 5.4, 6) ----
+
+  /** The page whose body is shown, or undefined. */
+  #shownPage() {
+    const shown = this.#displayed;
+    return shown && shown.kind === 'page' && this.#model ? this.#model.get(shown.id) : undefined;
+  }
+
+  /**
+   * The PDF button: the page alone in a new tab, as it is printed (where it
+   * is, then its body; print.css), and the browser's print dialog, where it
+   * can also be saved as PDF. Where the new tab is not allowed (a blocked
+   * pop-up), this page is printed instead, the viewer showing just the body.
+   */
+  #printPage() {
+    const page = this.#shownPage();
+    if (!page) return;
+    let win = null;
+    try {
+      win = window.open('', '_blank');
+    } catch {
+      win = null;
+    }
+    if (!win) {
+      window.print();
+      return;
+    }
+    const doc = win.document;
+    doc.title = page.title;
+    const lang = this.#ui.layout.getAttribute('lang');
+    if (lang) doc.documentElement.lang = lang;
+    // A constructed stylesheet of that window (not blocked by a CSP without
+    // 'unsafe-inline'), or a <style> where they are not supported. The
+    // host's styles come after ours, as in the viewer.
+    const text = PRINT_PAGE_CSS + (typeof this.#options.styles === 'string' ? `\n${this.#options.styles}` : '');
+    let sheet = null;
+    try {
+      if ('adoptedStyleSheets' in win.Document.prototype) {
+        sheet = new win.CSSStyleSheet();
+        sheet.replaceSync(text);
+        doc.adoptedStyleSheets = [sheet];
+      }
+    } catch {
+      sheet = null;
+    }
+    if (!sheet) doc.head.append(Object.assign(doc.createElement('style'), { textContent: text }));
+    // The viewer's frame as the host styled it: its font, sizes and colours.
+    const frame = doc.createElement('div');
+    frame.className = 'mpv';
+    frame.dataset.height = 'auto';
+    if (lang) frame.setAttribute('lang', lang);
+    const hostStyle = getComputedStyle(this);
+    frame.style.setProperty('font-family', getComputedStyle(this.#ui.frame).fontFamily);
+    for (const name of ['--mpv-font-size', '--mpv-spacing', '--mpv-color-accent', '--mpv-color-border', '--mpv-color-note', '--mpv-color-tip', '--mpv-color-important', '--mpv-color-warning', '--mpv-color-caution']) {
+      const value = hostStyle.getPropertyValue(name).trim();
+      if (value) frame.style.setProperty(name, value);
+    }
+    frame.style.setProperty('max-width', '760px');
+    frame.style.setProperty('margin', '0 auto');
+    frame.style.setProperty('padding', '24px 16px');
+    const toolbar = doc.createElement('div');
+    toolbar.className = 'mpv-toolbar';
+    toolbar.setAttribute('part', 'toolbar');
+    toolbar.append(doc.importNode(this.#ui.breadcrumb, true));
+    const content = doc.importNode(this.#ui.content, true);
+    frame.append(toolbar, content);
+    doc.body.style.setProperty('margin', '0');
+    doc.body.append(frame);
+    // Printed once the images have arrived (each at most a few seconds).
+    const loading = [...doc.images].filter((img) => !img.complete).map((img) => new Promise((done) => {
+      img.addEventListener('load', done, { once: true });
+      img.addEventListener('error', done, { once: true });
+      setTimeout(done, 5000);
+    }));
+    Promise.all(loading).then(() => {
+      win.focus();
+      win.print();
+    });
+  }
+
+  /**
+   * The Markdown button: the page's Markdown as written (its md, or the
+   * file its src gave), saved as "<title>.md". Images stay as the Markdown
+   * names them; their files are not included.
+   */
+  #downloadMarkdown() {
+    const page = this.#shownPage();
+    if (!page) return;
+    const text = page.md ?? this.#bodyCache.get(page.id);
+    if (typeof text !== 'string') return;
+    // Characters a file name cannot have on common systems.
+    const name = page.title.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || page.id;
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
+    const link = h('a', { href: url, download: `${name}.md`, hidden: true });
+    this.#ui.frame.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
   }
 
   // ---- related links (spec 5.4) ----
@@ -1962,6 +2095,14 @@ export class MdPagesViewerElement extends HTMLElement {
       this.#placeSideColumns();
       return;
     }
+    if (target.closest('.mpv-print-button') === this.#ui.printButton) {
+      this.#printPage();
+      return;
+    }
+    if (target.closest('.mpv-markdown-button') === this.#ui.markdownButton) {
+      this.#downloadMarkdown();
+      return;
+    }
     if (target.closest('.mpv-view-toggle') === this.#ui.viewToggle) {
       this.#childView = this.#childView === 'list' ? 'card' : 'list';
       this.#rerenderBody();
@@ -2292,6 +2433,8 @@ export class MdPagesViewerElement extends HTMLElement {
   #showBodyStatus(key, retry) {
     this.#forgetZoomable();
     this.#ui.related.hidden = true;
+    this.#ui.printButton.hidden = true;
+    this.#ui.markdownButton.hidden = true;
     this.#markChildIndex(false);
     this.#renderPager(null);
     this.#updateToolbar();

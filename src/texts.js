@@ -50,6 +50,8 @@ const JA = {
   updated: (date) => `最終更新：${date}`,
   related: '関連リソース',
   newTab: '（新しいタブで開く）',
+  printPage: 'このページを PDF に保存・印刷する',
+  downloadMarkdown: 'このページの Markdown をダウンロード',
 };
 
 const EN = {
@@ -93,6 +95,8 @@ const EN = {
   updated: (date) => `Last updated: ${date}`,
   related: 'Related resources',
   newTab: ' (opens in a new tab)',
+  printPage: 'Save this page as PDF or print it',
+  downloadMarkdown: 'Download this page as Markdown',
 };
 
 const ZH_CN = {
@@ -136,6 +140,8 @@ const ZH_CN = {
   updated: (date) => `最后更新：${date}`,
   related: '相关资源',
   newTab: '（在新标签页中打开）',
+  printPage: '将此页另存为 PDF 或打印',
+  downloadMarkdown: '下载此页的 Markdown',
 };
 
 const ZH_TW = {
@@ -179,6 +185,8 @@ const ZH_TW = {
   updated: (date) => `最後更新：${date}`,
   related: '相關資源',
   newTab: '（在新分頁中開啟）',
+  printPage: '將此頁另存為 PDF 或列印',
+  downloadMarkdown: '下載此頁的 Markdown',
 };
 
 const KO = {
@@ -222,6 +230,8 @@ const KO = {
   updated: (date) => `마지막 업데이트: ${date}`,
   related: '관련 리소스',
   newTab: ' (새 탭에서 열림)',
+  printPage: '이 페이지를 PDF로 저장하거나 인쇄',
+  downloadMarkdown: '이 페이지의 Markdown 다운로드',
 };
 
 export const DEFAULT_LOCALE = 'ja';
