@@ -37,6 +37,9 @@
   line-height: 1.7;
   background: var(--mpv-color-bg, transparent);
   --_space: var(--mpv-spacing, 16px);
+  /* The host's fixed header over the top of the view (spec 6): what stays
+     in view stays below it. Used only while the page scrolls the viewer. */
+  --_top: max(0px, var(--mpv-top-offset, 0px));
   --_accent: var(--mpv-color-accent, #2563eb);
   --_border: var(--mpv-color-border, rgba(127, 127, 127, 0.3));
   --_muted: color-mix(in srgb, currentColor 60%, transparent);
@@ -129,24 +132,41 @@
 }
 
 /* Height not set by the host: grow with the body. The toolbar stays at the
-   top of the view and the side columns just under it. */
+   top of the view (below the host's fixed header, --mpv-top-offset) and the
+   side columns just under it. The toolbar keeps that offset as its scroll
+   margin too: the element reads it from there, in px. */
 .mpv[data-height='auto'] .mpv-toolbar {
   position: sticky;
-  top: 0;
+  top: var(--_top);
+  scroll-margin-top: var(--_top);
   background: var(--mpv-color-bg, Canvas);
 }
 
 .mpv[data-height='auto'] .mpv-sidebar,
 .mpv[data-height='auto'] .mpv-toc {
   position: sticky;
-  top: var(--_bar-h, 0px);
+  top: calc(var(--_top) + var(--_bar-h, 0px));
   align-self: start;
-  max-height: calc(100vh - var(--_bar-h, 0px));
+  max-height: calc(100vh - var(--_top) - var(--_bar-h, 0px));
 }
 
-/* A heading or anchor jumped to lands just below the toolbar, not under it. */
+/* Moved by hand instead (a wrapper that does not scroll is what sticky
+   works against, see #placeSideColumns): there, the offset would push them
+   down even at rest. */
+.mpv[data-height='auto'][data-follow] .mpv-toolbar {
+  top: 0;
+}
+
+.mpv[data-height='auto'][data-follow] .mpv-sidebar,
+.mpv[data-height='auto'][data-follow] .mpv-toc {
+  top: var(--_bar-h, 0px);
+}
+
+/* A heading or anchor jumped to lands just below the toolbar, not under it,
+   nor under the host's fixed header (--_jump-top: the offset, less what the
+   scroller's own scroll-padding-top already keeps clear; set by the element). */
 .mpv[data-height='auto'] .mpv-content [id] {
-  scroll-margin-top: calc(var(--_bar-h, 0px) + 8px);
+  scroll-margin-top: calc(var(--_jump-top, 0px) + var(--_bar-h, 0px) + 8px);
 }
 
 /* Height set by the host: each column scrolls on its own under the toolbar. */

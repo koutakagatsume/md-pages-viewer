@@ -1427,6 +1427,8 @@ export class MdPagesViewerElement extends HTMLElement {
    */
   #scrollToTarget(target, { smooth = false } = {}) {
     this.#tocTaken = target;
+    // The host may have changed its header offset or scroll padding since.
+    this.#updateJumpTop();
     if (smooth && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
       this.#holdToc(target);
       target.scrollIntoView({ block: 'start', behavior: 'smooth' });
@@ -1509,14 +1511,45 @@ export class MdPagesViewerElement extends HTMLElement {
       this.#ui.main.scrollTop = 0;
       return;
     }
+    // The top of the element just below the host's fixed header, if any.
+    const offset = this.#topOffset();
     const top = this.getBoundingClientRect().top;
     const base = scrollBase(this);
     if (!base) {
-      if (top < 0) window.scrollBy(0, top);
+      if (top < offset) window.scrollBy(0, top - offset);
       return;
     }
-    const baseTop = base.getBoundingClientRect().top + base.clientTop;
+    const baseTop = base.getBoundingClientRect().top + base.clientTop + offset;
     if (top < baseTop) base.scrollTop -= baseTop - top;
+  }
+
+  /**
+   * The host's fixed header over the top of the view (--mpv-top-offset,
+   * spec 6), in px; 0 while a height is set (the viewer scrolls inside
+   * itself). The toolbar keeps it as its scroll margin (styles.css).
+   */
+  #topOffset() {
+    if (this.#ui.frame.dataset.height !== 'auto') return 0;
+    return Math.max(0, parseFloat(getComputedStyle(this.#ui.toolbar).scrollMarginTop) || 0);
+  }
+
+  /**
+   * How far below the top of the view, beyond the toolbar, a heading jumped
+   * to lands (--_jump-top, styles.css): the host's fixed header, less what
+   * the scroller's own scroll-padding-top already keeps clear, so the two
+   * are not added up.
+   */
+  #updateJumpTop() {
+    const offset = this.#topOffset();
+    let padding = 0;
+    if (offset > 0) {
+      const base = scrollBase(this);
+      // The window takes its scroll padding from the root element.
+      const value = getComputedStyle(base ?? document.documentElement).scrollPaddingTop;
+      padding = value.endsWith('%') ? (parseFloat(value) / 100) * (base ? base.clientHeight : window.innerHeight) : parseFloat(value) || 0;
+    }
+    const jump = `${Math.max(0, offset - padding)}px`;
+    if (this.#ui.frame.style.getPropertyValue('--_jump-top') !== jump) this.#ui.frame.style.setProperty('--_jump-top', jump);
   }
 
   #updateHeightMode() {
@@ -1558,6 +1591,8 @@ export class MdPagesViewerElement extends HTMLElement {
       this.#stopFollowing();
       if (target) target.addEventListener('scroll', this.#onFollowScroll, { passive: true });
       this.#followTarget = target;
+      // Sticky stays as without the host's header offset (styles.css): the offset is ours to add.
+      this.#ui.frame.toggleAttribute('data-follow', target !== null);
     }
     this.#followBase = base;
     this.#placeSideColumns();
@@ -1566,18 +1601,19 @@ export class MdPagesViewerElement extends HTMLElement {
   #stopFollowing() {
     if (this.#followTarget) this.#followTarget.removeEventListener('scroll', this.#onFollowScroll);
     this.#followTarget = null;
+    this.#ui.frame.removeAttribute('data-follow');
     this.#ui.toolbar.style.translate = '';
     this.#ui.sidebar.style.translate = '';
     this.#ui.toc.style.translate = '';
   }
 
-  // The toolbar stays at the top of the view, and the side columns just
-  // under it (spec 6). Each moves down by how far the layout's top has gone
-  // above the view, but not past the layout's end.
+  // The toolbar stays at the top of the view (below the host's fixed header,
+  // if any), and the side columns just under it (spec 6). Each moves down by
+  // how far the layout's top has gone above that, but not past the layout's end.
   #placeSideColumns() {
     if (!this.#followTarget) return;
     const base = this.#followBase;
-    const viewTop = base ? base.getBoundingClientRect().top + base.clientTop : 0;
+    const viewTop = (base ? base.getBoundingClientRect().top + base.clientTop : 0) + this.#topOffset();
     const layout = this.#ui.layout.getBoundingClientRect();
     const bar = this.#ui.toolbar.offsetHeight;
     const scrolled = viewTop - layout.top;
@@ -1780,6 +1816,7 @@ export class MdPagesViewerElement extends HTMLElement {
     if (this.#ui.viewToggle.textContent !== viewLabel) this.#ui.viewToggle.textContent = viewLabel;
     const barHeight = `${this.#ui.toolbar.offsetHeight}px`;
     if (frame.style.getPropertyValue('--_bar-h') !== barHeight) frame.style.setProperty('--_bar-h', barHeight);
+    this.#updateJumpTop();
   }
 
   /** `kind` names both the icon and the label (the words and ICONS share the keys). */
@@ -2275,8 +2312,10 @@ export class MdPagesViewerElement extends HTMLElement {
       const box = main.getBoundingClientRect();
       return { top: box.top, bottom: box.bottom, ...ends(main.scrollTop, main.clientHeight, main.scrollHeight) };
     }
-    // The toolbar stays over the top of the view (spec 6): the body is read below it.
-    const below = (top) => Math.max(top, this.#ui.toolbar.getBoundingClientRect().bottom);
+    // The toolbar stays over the top of the view (spec 6), below the host's
+    // fixed header if any: the body is read below both.
+    const offset = this.#topOffset();
+    const below = (top) => Math.max(top + offset, this.#ui.toolbar.getBoundingClientRect().bottom);
     const base = scrollBase(this);
     if (base) {
       const box = base.getBoundingClientRect();

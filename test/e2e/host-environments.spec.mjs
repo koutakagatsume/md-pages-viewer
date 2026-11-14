@@ -232,3 +232,141 @@ test('[表示/スクロールの基準] after the element is removed, scrolling 
   await wait(100);
   expect(await page.evaluate(() => window.__el.shadowRoot.querySelector('.mpv-sidebar').style.translate)).toBe(before);
 });
+
+// ---- the host's fixed header (--mpv-top-offset, spec 6) ----
+
+const HEADER = 64;
+const SECTIONS = ['一', '二', '三', '四', '五'];
+const HEADER_PAGES = [
+  { id: 'a', parentId: null, title: 'A', order: 1, md: `# A\n\n${SECTIONS.map((s) => `## 章${s}\n\n${long(40)}`).join('\n\n')}\n\n[to b](?page=b)` },
+  { id: 'b', parentId: null, title: 'B', order: 2, md: `# B\n\n${long(150)}` },
+];
+
+/**
+ * A page with a fixed header of 64px over the top of the view, and the viewer
+ * below it. `offset`: the host passes the header's height as --mpv-top-offset.
+ */
+async function openUnderHeader(page, { offset = true, css = '', query = '', wrap = false, height } = {}) {
+  await page.goto(`${BLANK}${query}`);
+  await page.addStyleTag({
+    content: `body{margin:0;padding-top:${HEADER}px} #hdr{position:fixed;top:0;left:0;right:0;height:${HEADER}px;z-index:100;background:#111}
+      ${offset ? `md-pages-viewer{--mpv-top-offset:${HEADER}px}` : ''} ${css}`,
+  });
+  await page.evaluate(
+    ({ pages, wrap, height }) => {
+      const header = document.createElement('div');
+      header.id = 'hdr';
+      const el = document.createElement('md-pages-viewer');
+      if (height) el.style.height = height;
+      el.pages = pages;
+      const holder = document.createElement('div');
+      holder.id = 'wrap';
+      holder.append(el);
+      document.body.append(header, wrap ? holder : el);
+    },
+    { pages: HEADER_PAGES, wrap, height },
+  );
+  const viewer = page.locator('md-pages-viewer');
+  await expect(content(viewer).locator('h1')).toBeVisible();
+  return viewer;
+}
+
+const partRects = (viewer) =>
+  viewer.evaluate((el) => {
+    const r = (s) => {
+      const box = el.shadowRoot.querySelector(s).getBoundingClientRect();
+      return { top: Math.round(box.top), bottom: Math.round(box.bottom) };
+    };
+    return { toolbar: r('.mpv-toolbar'), sidebar: r('.mpv-sidebar'), toc: r('.mpv-toc'), layout: r('.mpv-layout'), viewer: Math.round(el.getBoundingClientRect().top) };
+  });
+
+const headingAt = (viewer, text) =>
+  viewer.evaluate((el, text) => {
+    const s = el.shadowRoot;
+    const h = [...s.querySelectorAll('.mpv-content h2')].find((n) => n.textContent === text);
+    return { heading: Math.round(h.getBoundingClientRect().top), barBottom: Math.round(s.querySelector('.mpv-toolbar').getBoundingClientRect().bottom), current: s.querySelector('.mpv-toc [aria-current="location"]')?.textContent ?? null };
+  }, text);
+
+test('[表示/固定ヘッダー] --mpv-top-offset を指定すると、スクロールしてもツールバーは固定ヘッダーの下に、サイドバーと目次はその下に残る。止まっているときは押し下げない。指定しなければ今のまま', async ({ page }) => {
+  let viewer = await openUnderHeader(page);
+  const rest = await partRects(viewer);
+  expect(rest.toolbar.top).toBe(rest.layout.top);
+  expect(rest.layout.top).toBe(HEADER);
+
+  await page.evaluate(() => window.scrollTo(0, 2000));
+  await expect.poll(async () => (await partRects(viewer)).toolbar.top).toBe(HEADER);
+  const scrolled = await partRects(viewer);
+  expect(scrolled.sidebar.top).toBe(scrolled.toolbar.bottom);
+  expect(scrolled.toc.top).toBe(scrolled.toolbar.bottom);
+  // 縦に長い列も、画面の下端を越えない
+  expect(scrolled.sidebar.bottom).toBeLessThanOrEqual(800);
+  expect(scrolled.toc.bottom).toBeLessThanOrEqual(800);
+
+  // 指定しなければ、ツールバーは画面の上端（固定ヘッダーの裏）に残る
+  viewer = await openUnderHeader(page, { offset: false });
+  await page.evaluate(() => window.scrollTo(0, 2000));
+  await expect.poll(async () => (await partRects(viewer)).toolbar.top).toBe(0);
+});
+
+test('[表示/固定ヘッダー] 目次・#付きの URL で移った見出しはツールバーのすぐ下に出て、目次で強調される。ページを切り替えると要素の上端が固定ヘッダーの下に来る', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  let viewer = await openUnderHeader(page);
+  await toc(viewer).locator('a', { hasText: '章四' }).click();
+  await expect.poll(async () => (await headingAt(viewer, '章四')).heading).toBe(HEADER + (await viewer.evaluate((el) => el.shadowRoot.querySelector('.mpv-toolbar').offsetHeight)) + 8);
+  const jumped = await headingAt(viewer, '章四');
+  expect(jumped.heading - jumped.barBottom).toBe(8);
+  expect(jumped.current).toBe('章四');
+
+  // 本文のリンクで別のページへ：要素の上端が固定ヘッダーのすぐ下
+  const link = content(viewer).locator('a', { hasText: 'to b' });
+  await link.scrollIntoViewIfNeeded();
+  await link.click();
+  await expect(content(viewer).locator('h1')).toHaveText('B');
+  await expect.poll(async () => (await partRects(viewer)).viewer).toBe(HEADER);
+
+  // #見出し 付きの URL で開く
+  viewer = await openUnderHeader(page, { query: `?page=a#${encodeURIComponent('章三')}` });
+  await expect.poll(async () => { const r = await headingAt(viewer, '章三'); return r.heading - r.barBottom; }).toBe(8);
+  expect((await partRects(viewer)).toolbar.top).toBe(HEADER);
+});
+
+test('[表示/固定ヘッダー] 組み込み先が scroll-padding-top も指定しているときは、二重にずらさない。固定ヘッダーより大きい分だけは、その指定どおり下に出る', async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  // 見出しとツールバーの下端の間：固定ヘッダー以下の scroll-padding-top なら 8px。10%（画面の高さ 800px の 80px）なら、64px を越えた 16px の分も空く
+  for (const [padding, gap] of [[`${HEADER}px`, 8], ['40px', 8], ['10%', 24]]) {
+    const viewer = await openUnderHeader(page, { css: `html{scroll-padding-top:${padding}}` });
+    await toc(viewer).locator('a', { hasText: '章四' }).click();
+    await expect.poll(async () => { const r = await headingAt(viewer, '章四'); return [r.heading - r.barBottom, (await partRects(viewer)).toolbar.top]; }, padding).toEqual([gap, HEADER]);
+  }
+});
+
+test('[表示/固定ヘッダー] overflow-x: hidden のラッパーの中（列を手で動かす場合）でも、固定ヘッダーの下に残り、止まっているときは押し下げない', async ({ page }) => {
+  const viewer = await openUnderHeader(page, { wrap: true, css: '#wrap{overflow-x:hidden}' });
+  const rest = await partRects(viewer);
+  expect(rest.toolbar.top).toBe(rest.layout.top);
+  await page.evaluate(() => window.scrollTo(0, 2000));
+  await expect.poll(async () => (await partRects(viewer)).toolbar.top).toBe(HEADER);
+  const scrolled = await partRects(viewer);
+  expect(scrolled.sidebar.top).toBe(scrolled.toolbar.bottom);
+  expect(scrolled.toc.top).toBe(scrolled.toolbar.bottom);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await expect.poll(async () => { const r = await partRects(viewer); return r.toolbar.top - r.layout.top; }).toBe(0);
+});
+
+test('[表示/固定ヘッダー] 狭い表示幅で開いたページ一覧も、ツールバーの下に出る。高さを指定したときは使わない', async ({ page }) => {
+  await page.setViewportSize({ width: 600, height: 800 });
+  let viewer = await openUnderHeader(page);
+  await page.evaluate(() => window.scrollTo(0, 2000));
+  await viewer.locator('.mpv-sidebar-toggle').click();
+  await expect(viewer.locator('.mpv-tree a', { hasText: 'B' })).toBeVisible();
+  await expect.poll(async () => { const r = await partRects(viewer); return [r.toolbar.top, r.sidebar.top - r.toolbar.bottom]; }).toEqual([HEADER, 0]);
+  expect((await partRects(viewer)).sidebar.bottom).toBeLessThanOrEqual(800);
+
+  // 高さを指定したとき：中でスクロールするので、ツールバーは要素の上端のまま
+  await page.setViewportSize({ width: 1280, height: 800 });
+  viewer = await openUnderHeader(page, { height: '500px' });
+  expect(await viewer.evaluate((el) => el.shadowRoot.querySelector('.mpv').dataset.height)).toBe('fixed');
+  const fixed = await partRects(viewer);
+  expect(fixed.toolbar.top).toBe(fixed.viewer);
+  expect(fixed.sidebar.top).toBe(fixed.toolbar.bottom);
+});
