@@ -10,8 +10,8 @@ import { DEFAULT_LOCALE, findLocale, resolveTexts } from './texts.js';
 
 export const TAG = 'md-pages-viewer';
 
-const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts'];
-const ATTRIBUTES = { pages: 'pages', 'current-id': 'currentId', 'base-url': 'baseUrl', 'url-param': 'urlParam', locale: 'locale' };
+const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts', 'feedback'];
+const ATTRIBUTES = { pages: 'pages', 'current-id': 'currentId', 'base-url': 'baseUrl', 'url-param': 'urlParam', locale: 'locale', feedback: 'feedback' };
 
 /** At most this many search results are listed (spec 5.4). */
 const SEARCH_RESULTS_SHOWN = 50;
@@ -110,6 +110,9 @@ const ICONS = {
   },
   // After a related link that opens another site, in a new tab.
   external: () => icon(['path', { d: 'M14 4h6v6' }], ['path', { d: 'M20 4l-9 9' }], ['path', { d: 'M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5' }]),
+  // "Was this page helpful?": yes and no.
+  thumbsUp: () => icon(['path', { d: 'M7 10v11' }], ['path', { d: 'M15 5.9L14 10h5.8a2 2 0 0 1 1.9 2.6l-2.3 7.9A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.8a2 2 0 0 0 1.8-1.1L12 2a3.1 3.1 0 0 1 3 3.9z' }]),
+  thumbsDown: () => icon(['path', { d: 'M17 14V3' }], ['path', { d: 'M9 18.1l1-4.1H4.2a2 2 0 0 1-1.9-2.6l2.3-7.9A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.8a2 2 0 0 0-1.8 1.1L12 22a3.1 3.1 0 0 1-3-3.9z' }]),
 };
 
 // How long the search words must stay the same before the host is told of the search (ms, spec 5.11).
@@ -169,6 +172,8 @@ function buildParts() {
           h('details', { class: 'mpv-toc-mobile', part: 'toc-mobile', hidden: true }, h('summary', {}), tocList()),
           h('div', { class: 'mpv-body-status', part: 'status', role: 'status', hidden: true }, h('p', { class: 'mpv-body-status-text' }), retryButton('mpv-body-retry')),
           h('article', { class: 'mpv-content', part: 'content' }),
+          // "Was this page helpful?" (spec 5.4), when the host asks for it.
+          h('div', { class: 'mpv-feedback', part: 'feedback', role: 'group', hidden: true }),
           h('nav', { class: 'mpv-pager', part: 'pager', hidden: true }),
         ),
         h(
@@ -345,7 +350,7 @@ export class MdPagesViewerElement extends HTMLElement {
     return Object.keys(ATTRIBUTES);
   }
 
-  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined };
+  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined, feedback: undefined };
   // The words on our parts (spec 5.10): made from locale and texts when first
   // needed, and again after either changes.
   #words = null;
@@ -418,6 +423,10 @@ export class MdPagesViewerElement extends HTMLElement {
   #zoomFrom = null;
   // The button that copied a link to a heading -> the timer that puts it back.
   #copyTimers = new WeakMap();
+  // "Was this page helpful?" (spec 5.4): the page it is shown for (null: not
+  // shown), and the pages answered while the element is there (id -> yes).
+  #feedbackPage = null;
+  #feedbackAnswers = new Map();
   // Events for the host (spec 5.11): the id of the page last told of (null:
   // none yet), and for the search, the number of results of the words in
   // the box, the timer that waits for them to settle, and the words last told of.
@@ -516,6 +525,7 @@ export class MdPagesViewerElement extends HTMLElement {
       tree: $('.mpv-tree'),
       main: $('.mpv-main'),
       pager: $('.mpv-pager'),
+      feedback: $('.mpv-feedback'),
       breadcrumb: $('.mpv-breadcrumb'),
       tocMobile: $('.mpv-toc-mobile'),
       bodyStatus: $('.mpv-body-status'),
@@ -567,6 +577,10 @@ export class MdPagesViewerElement extends HTMLElement {
       this.#updateFollow();
     });
     this.#listenZoom();
+    this.#ui.feedback.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-mpv-feedback]');
+      if (button) this.#answerFeedback(button.dataset.mpvFeedback === 'yes');
+    });
   }
 
   // ---- options ----
@@ -587,6 +601,8 @@ export class MdPagesViewerElement extends HTMLElement {
   set locale(value) { this.#setOption('locale', value); }
   get texts() { return this.#options.texts; }
   set texts(value) { this.#setOption('texts', value); }
+  get feedback() { return this.#options.feedback; }
+  set feedback(value) { this.#setOption('feedback', value); }
   get styles() { return this.#options.styles; }
   set styles(value) {
     // Only the look changes, so it applies at once without drawing again.
@@ -743,6 +759,7 @@ export class MdPagesViewerElement extends HTMLElement {
     if (switched) return;
     if (changed.has('urlParam')) this.#rerenderNavigation();
     if (changed.has('imageResolver') || changed.has('baseUrl') || changed.has('urlParam')) this.#rerenderBody();
+    if (changed.has('feedback')) this.#renderFeedback();
   }
 
   /** Opens currentId (spec 5.6). Returns whether the page was switched. */
@@ -1171,6 +1188,9 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#renderRelated(page, options);
     this.#ui.printButton.hidden = false;
     this.#ui.markdownButton.hidden = false;
+    // Not for a page with nothing in its body.
+    this.#feedbackPage = markdown.trim() === '' ? null : page;
+    this.#renderFeedback();
     this.#renderPager(page);
   }
 
@@ -1357,6 +1377,8 @@ export class MdPagesViewerElement extends HTMLElement {
   #putBody(fragment, how) {
     this.#forgetZoomable();
     this.#ui.related.hidden = true;
+    this.#feedbackPage = null;
+    this.#ui.feedback.hidden = true;
     this.#ui.printButton.hidden = true;
     this.#ui.markdownButton.hidden = true;
     this.#ui.bodyStatus.hidden = true;
@@ -1523,6 +1545,57 @@ export class MdPagesViewerElement extends HTMLElement {
     }
     this.#searchReported = query;
     this.#emit('mpv-search', { query, resultCount: this.#searchCount });
+  }
+
+  // ---- "was this page helpful?" (spec 5.4) ----
+
+  /** Whether the host asked for the question: the feedback option true, or the attribute (but not "false"). */
+  #feedbackOn() {
+    const value = this.#options.feedback;
+    return value === true || (typeof value === 'string' && value !== 'false');
+  }
+
+  /**
+   * At the end of the body, above the previous and next pages: the question
+   * with "yes" and "no", or the thanks once the page has been answered.
+   * Answers are kept while the element is there, so a page is not asked
+   * again (in another language either: the same id).
+   */
+  #renderFeedback() {
+    const box = this.#ui.feedback;
+    const page = this.#feedbackPage;
+    if (!page || !this.#feedbackOn()) {
+      box.hidden = true;
+      box.replaceChildren();
+      return;
+    }
+    const question = this.#text('feedbackQuestion');
+    box.setAttribute('aria-label', question);
+    if (this.#feedbackAnswers.has(page.id)) {
+      box.replaceChildren(h('p', { class: 'mpv-feedback-thanks', part: 'feedback-thanks', tabindex: '-1' }, ICONS.copied(), this.#text('feedbackThanks')));
+    } else {
+      const button = (answer, iconOf, key) =>
+        h('button', { type: 'button', class: 'mpv-feedback-button', part: `feedback-button ${answer}`, 'data-mpv-feedback': answer }, iconOf(), this.#text(key));
+      box.replaceChildren(
+        h('span', { class: 'mpv-feedback-question', part: 'feedback-question' }, question),
+        h('span', { class: 'mpv-feedback-buttons' }, button('yes', ICONS.thumbsUp, 'feedbackYes'), button('no', ICONS.thumbsDown, 'feedbackNo')),
+      );
+    }
+    box.hidden = false;
+  }
+
+  /**
+   * "Yes" or "no" pressed: the thanks takes their place and the focus (so
+   * it is read out, and the keyboard does not lose its place), and the
+   * host is told (mpv-feedback, spec 5.11). Once per page.
+   */
+  #answerFeedback(helpful) {
+    const page = this.#feedbackPage;
+    if (!page || this.#feedbackAnswers.has(page.id)) return;
+    this.#feedbackAnswers.set(page.id, helpful);
+    this.#renderFeedback();
+    this.#ui.feedback.querySelector('.mpv-feedback-thanks')?.focus({ preventScroll: true });
+    this.#emit('mpv-feedback', { id: page.id, title: page.title, helpful });
   }
 
   // ---- when the page was last updated (spec 5.4) ----
@@ -2553,6 +2626,8 @@ export class MdPagesViewerElement extends HTMLElement {
   #showBodyStatus(key, retry) {
     this.#forgetZoomable();
     this.#ui.related.hidden = true;
+    this.#feedbackPage = null;
+    this.#ui.feedback.hidden = true;
     this.#ui.printButton.hidden = true;
     this.#ui.markdownButton.hidden = true;
     this.#markChildIndex(false);

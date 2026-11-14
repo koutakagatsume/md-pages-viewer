@@ -994,6 +994,67 @@
   text-align: right;
 }
 
+/* "Was this page helpful?" (spec 5.4): at the end of the body, above the
+   links to the previous and next pages, when the host asks for it. */
+.mpv-feedback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6em 1em;
+  margin-top: calc(var(--_space) * 2.5);
+  font-size: 0.95em;
+  line-height: 1.5;
+}
+
+.mpv-feedback-question {
+  font-weight: 600;
+}
+
+.mpv-feedback-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5em;
+}
+
+.mpv-feedback-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  padding: 0.3em 0.95em;
+  border: 1px solid var(--_border);
+  border-radius: 999px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.mpv-feedback-button:hover,
+.mpv-feedback-button:focus-visible {
+  border-color: var(--_accent);
+  color: var(--_accent);
+}
+
+.mpv-feedback svg {
+  width: 1.1em;
+  height: 1.1em;
+  flex: none;
+}
+
+.mpv-feedback-thanks {
+  display: flex;
+  align-items: center;
+  gap: 0.4em;
+  margin: 0;
+  color: var(--_muted);
+}
+
+/* Focused only so that it is read out after the answer. */
+.mpv-feedback-thanks:focus {
+  outline: none;
+}
+
 /* Told to screen readers only. */
 .mpv-live {
   position: absolute;

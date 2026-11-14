@@ -52,6 +52,10 @@ const JA = {
   newTab: '（新しいタブで開く）',
   printPage: 'このページを PDF に保存・印刷する',
   downloadMarkdown: 'このページの Markdown をダウンロード',
+  feedbackQuestion: 'このページは役に立ちましたか？',
+  feedbackYes: 'はい',
+  feedbackNo: 'いいえ',
+  feedbackThanks: 'ご意見ありがとうございました。',
 };
 
 const EN = {
@@ -97,6 +101,10 @@ const EN = {
   newTab: ' (opens in a new tab)',
   printPage: 'Save this page as PDF or print it',
   downloadMarkdown: 'Download this page as Markdown',
+  feedbackQuestion: 'Was this page helpful?',
+  feedbackYes: 'Yes',
+  feedbackNo: 'No',
+  feedbackThanks: 'Thank you for your feedback.',
 };
 
 const ZH_CN = {
@@ -142,6 +150,10 @@ const ZH_CN = {
   newTab: '（在新标签页中打开）',
   printPage: '将此页另存为 PDF 或打印',
   downloadMarkdown: '下载此页的 Markdown',
+  feedbackQuestion: '此页面对您有帮助吗？',
+  feedbackYes: '是',
+  feedbackNo: '否',
+  feedbackThanks: '感谢您的反馈。',
 };
 
 const ZH_TW = {
@@ -187,6 +199,10 @@ const ZH_TW = {
   newTab: '（在新分頁中開啟）',
   printPage: '將此頁另存為 PDF 或列印',
   downloadMarkdown: '下載此頁的 Markdown',
+  feedbackQuestion: '這個頁面對您有幫助嗎？',
+  feedbackYes: '是',
+  feedbackNo: '否',
+  feedbackThanks: '感謝您的意見。',
 };
 
 const KO = {
@@ -232,6 +248,10 @@ const KO = {
   newTab: ' (새 탭에서 열림)',
   printPage: '이 페이지를 PDF로 저장하거나 인쇄',
   downloadMarkdown: '이 페이지의 Markdown 다운로드',
+  feedbackQuestion: '이 페이지가 도움이 되었나요?',
+  feedbackYes: '예',
+  feedbackNo: '아니요',
+  feedbackThanks: '의견을 보내 주셔서 감사합니다.',
 };
 
 export const DEFAULT_LOCALE = 'ja';
