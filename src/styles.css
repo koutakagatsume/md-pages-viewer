@@ -883,6 +883,16 @@
   right: calc(100% + 6px);
 }
 
+/* When the page was last updated (spec 5.4): small and faint, on the right
+   at the end of the body, above the links to the previous and next pages. */
+.mpv-content .mpv-updated {
+  margin: calc(var(--_space) * 2) 0 0;
+  color: var(--_muted);
+  font-size: 0.85em;
+  line-height: 1.5;
+  text-align: right;
+}
+
 /* Told to screen readers only. */
 .mpv-live {
   position: absolute;

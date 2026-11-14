@@ -3,13 +3,48 @@
 
 const isMissing = (v) => v === undefined || v === null;
 
+// updatedAt (spec 4): an ISO 8601 date, then optionally a time with an
+// optional offset: 2026-11-14, 2026-11-14T10:30, 2026-11-14T10:30:00+09:00, ...Z.
+const DAY = /^(\d{4})-(\d{2})-(\d{2})/;
+const TIME = /^T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d{1,3})?)?(Z|[+-]([01]\d|2[0-3]):[0-5]\d)?$/;
+
+/**
+ * When a page was last updated (spec 4): {time, dateOnly, iso}; null when
+ * not given (or blank); undefined when it is not a date. A date alone is a
+ * day on the calendar, shown as written wherever the reader is (time: its
+ * UTC midnight); a date and time, or a Date object, is a moment, shown as
+ * the reader's day. Days that do not exist (2026-02-30) are not dates.
+ * @returns {{time: number, dateOnly: boolean, iso: string} | null | undefined}
+ */
+export function parseUpdatedAt(value) {
+  if (isMissing(value)) return null;
+  if (value instanceof Date) {
+    const time = value.getTime();
+    return Number.isNaN(time) ? undefined : { time, dateOnly: false, iso: value.toISOString() };
+  }
+  if (typeof value !== 'string') return undefined;
+  const text = value.trim();
+  if (text === '') return null;
+  const day = DAY.exec(text);
+  if (!day) return undefined;
+  const [year, month, date] = day.slice(1).map(Number);
+  const midnight = new Date(0);
+  midnight.setUTCFullYear(year, month - 1, date);
+  if (midnight.getUTCFullYear() !== year || midnight.getUTCMonth() !== month - 1 || midnight.getUTCDate() !== date) return undefined;
+  const rest = text.slice(day[0].length);
+  if (rest === '') return { time: midnight.getTime(), dateOnly: true, iso: text };
+  if (!TIME.test(rest)) return undefined;
+  const time = Date.parse(text);
+  return Number.isNaN(time) ? undefined : { time, dateOnly: false, iso: text };
+}
+
 /**
  * @param {unknown[]} input
  * @param {(message: string) => void} warn
  */
 export function buildModel(input, warn = () => {}) {
   // md and src both null: the page has no body; it shows its child pages (spec 5.4).
-  /** @type {Map<string, {id: string, parentId: string|null, title: string, description: string|null, thumbnail: string|null, md: string|null, src: string|null, order: number|null, index: number, raw: object}>} */
+  /** @type {Map<string, {id: string, parentId: string|null, title: string, description: string|null, thumbnail: string|null, updatedAt: {time: number, dateOnly: boolean, iso: string}|null, md: string|null, src: string|null, order: number|null, index: number, raw: object}>} */
   const byId = new Map();
   const list = Array.isArray(input) ? input : [];
 
@@ -32,6 +67,10 @@ export function buildModel(input, warn = () => {}) {
     if (!isMissing(raw.md)) md = String(raw.md);
     // An empty src points at no file (fetching "" would load the host page itself).
     else if (!isMissing(raw.src) && String(raw.src).trim() !== '') src = String(raw.src);
+    const updatedAt = parseUpdatedAt(raw.updatedAt);
+    if (updatedAt === undefined) {
+      warn(`updatedAt of page "${id}" is not a date (YYYY-MM-DD, or a date and time such as 2026-11-14T10:30:00+09:00); it is not shown.`);
+    }
     byId.set(id, {
       id,
       parentId: isMissing(raw.parentId) ? null : String(raw.parentId),
@@ -39,6 +78,8 @@ export function buildModel(input, warn = () => {}) {
       description: isMissing(raw.description) || String(raw.description).trim() === '' ? null : String(raw.description).trim(),
       // The image on the page's card in a child index (spec 5.4), a path or URL.
       thumbnail: isMissing(raw.thumbnail) || String(raw.thumbnail).trim() === '' ? null : String(raw.thumbnail).trim(),
+      // When the page was last updated, shown at the end of its body (spec 5.4).
+      updatedAt: updatedAt ?? null,
       md,
       src,
       order: typeof raw.order === 'number' && Number.isFinite(raw.order) ? raw.order : null,

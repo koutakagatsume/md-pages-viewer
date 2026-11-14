@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildModel, resolveInitialPage } from '../../src/pages.js';
+import { buildModel, parseUpdatedAt, resolveInitialPage } from '../../src/pages.js';
 
 const collect = () => {
   const warnings = [];
@@ -141,4 +141,39 @@ test('thumbnail is kept as a trimmed string; missing, null or blank gives null',
   assert.equal(model.get('c').thumbnail, null);
   assert.equal(model.get('d').thumbnail, null);
   assert.equal(model.get('e').thumbnail, '42');
+});
+
+test('updatedAt: a date alone is a calendar day (its UTC midnight); a date and time is a moment; blank or missing is none', () => {
+  assert.deepEqual(parseUpdatedAt('2026-11-14'), { time: Date.UTC(2026, 10, 14), dateOnly: true, iso: '2026-11-14' });
+  assert.deepEqual(parseUpdatedAt(' 2026-02-28 '), { time: Date.UTC(2026, 1, 28), dateOnly: true, iso: '2026-02-28' });
+  assert.deepEqual(parseUpdatedAt('2026-11-14T10:30:00+09:00'), { time: Date.UTC(2026, 10, 14, 1, 30), dateOnly: false, iso: '2026-11-14T10:30:00+09:00' });
+  assert.deepEqual(parseUpdatedAt('2026-11-14T23:30:00Z'), { time: Date.UTC(2026, 10, 14, 23, 30), dateOnly: false, iso: '2026-11-14T23:30:00Z' });
+  assert.deepEqual(parseUpdatedAt('2026-11-14T10:30:15.250Z'), { time: Date.UTC(2026, 10, 14, 10, 30, 15, 250), dateOnly: false, iso: '2026-11-14T10:30:15.250Z' });
+  // No offset: the reader's local time, as the browser reads it
+  assert.equal(parseUpdatedAt('2026-11-14T10:30').time, new Date(2026, 10, 14, 10, 30).getTime());
+  const moment = new Date(Date.UTC(2026, 10, 14, 1, 2, 3));
+  assert.deepEqual(parseUpdatedAt(moment), { time: moment.getTime(), dateOnly: false, iso: '2026-11-14T01:02:03.000Z' });
+  for (const none of [undefined, null, '', '   ']) assert.equal(parseUpdatedAt(none), null, JSON.stringify(none));
+});
+
+test('updatedAt: days that do not exist, other forms and other types are not dates', () => {
+  for (const bad of ['2026-02-30', '2026-13-01', '2026-00-10', '2026-11-14T24:00', '2026-11-14T10:60', '2026-11-14 10:30', '2026/11/14', '14 Nov 2026', '2026-11-14T10:30+9', '2026-02-30T10:00', 'yesterday', 1794619800000, true, {}, new Date(NaN)]) {
+    assert.equal(parseUpdatedAt(bad), undefined, String(bad));
+  }
+});
+
+test('updatedAt is kept on the page; one that is not a date is warned about and left out', () => {
+  const { warnings, warn } = collect();
+  const model = buildModel(
+    [
+      { id: 'a', parentId: null, title: 'A', md: '', updatedAt: '2026-11-14' },
+      { id: 'b', parentId: null, title: 'B', md: '', updatedAt: '2026-02-30' },
+      { id: 'c', parentId: null, title: 'C', md: '' },
+    ],
+    warn,
+  );
+  assert.deepEqual(model.get('a').updatedAt, { time: Date.UTC(2026, 10, 14), dateOnly: true, iso: '2026-11-14' });
+  assert.equal(model.get('b').updatedAt, null);
+  assert.equal(model.get('c').updatedAt, null);
+  assert.deepEqual(warnings, ['updatedAt of page "b" is not a date (YYYY-MM-DD, or a date and time such as 2026-11-14T10:30:00+09:00); it is not shown.']);
 });

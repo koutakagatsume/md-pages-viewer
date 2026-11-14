@@ -5,8 +5,9 @@
 /**
  * Every key a locale has. A function takes the number or the search words
  * it shows (`toggle` takes the page's title, `zoomImage` the image's
- * alternative text, "" when it has none, `copyLink` the heading's words);
- * every other value is a string.
+ * alternative text, "" when it has none, `copyLink` the heading's words,
+ * `updated` the date, already written the way of the language); every other
+ * value is a string.
  */
 const JA = {
   loading: '読み込み中…',
@@ -46,6 +47,7 @@ const JA = {
   copyLink: (title) => `「${title}」へのリンクをコピー`,
   linkCopied: 'リンクをコピーしました',
   copyFailed: 'コピーできませんでした',
+  updated: (date) => `最終更新：${date}`,
 };
 
 const EN = {
@@ -86,6 +88,7 @@ const EN = {
   copyLink: (title) => `Copy link to “${title}”`,
   linkCopied: 'Link copied',
   copyFailed: 'Could not copy',
+  updated: (date) => `Last updated: ${date}`,
 };
 
 const ZH_CN = {
@@ -126,6 +129,7 @@ const ZH_CN = {
   copyLink: (title) => `复制“${title}”的链接`,
   linkCopied: '已复制链接',
   copyFailed: '无法复制',
+  updated: (date) => `最后更新：${date}`,
 };
 
 const ZH_TW = {
@@ -166,6 +170,7 @@ const ZH_TW = {
   copyLink: (title) => `複製「${title}」的連結`,
   linkCopied: '已複製連結',
   copyFailed: '無法複製',
+  updated: (date) => `最後更新：${date}`,
 };
 
 const KO = {
@@ -206,6 +211,7 @@ const KO = {
   copyLink: (title) => `“${title}” 링크 복사`,
   linkCopied: '링크를 복사했습니다',
   copyFailed: '복사할 수 없습니다',
+  updated: (date) => `마지막 업데이트: ${date}`,
 };
 
 export const DEFAULT_LOCALE = 'ja';

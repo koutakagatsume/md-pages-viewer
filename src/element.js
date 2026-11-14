@@ -5,7 +5,7 @@ import css from './styles.css';
 import { buildModel, resolveInitialPage } from './pages.js';
 import { classifyLink, decodeFragment, headingId, pageUrl, resolveImage } from './paths.js';
 import { renderMarkdown, safeImageUrl } from './markdown.js';
-import { resolveTexts } from './texts.js';
+import { DEFAULT_LOCALE, findLocale, resolveTexts } from './texts.js';
 
 export const TAG = 'md-pages-viewer';
 
@@ -1086,6 +1086,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#putBody(fragment, how);
     this.#watchZoomable();
     this.#addHeadingLinks();
+    this.#addUpdated(page);
     this.#renderPager(page);
   }
 
@@ -1400,6 +1401,32 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#zoomFrom = null;
     // Back to the image it came from, while the body still has it.
     if (from && this.#ui.content.contains(from) && from.hasAttribute('data-mpv-zoom')) from.focus({ preventScroll: true });
+  }
+
+  // ---- when the page was last updated (spec 5.4) ----
+
+  /**
+   * The page's updatedAt (spec 4) at the end of its body, on the right:
+   * "最終更新：2026年11月14日", the date written the way of the viewer's
+   * language (spec 5.10). A date alone is that day wherever the reader is; a
+   * date and time is the reader's day. Not on a page without it.
+   */
+  #addUpdated(page) {
+    const updated = page.updatedAt;
+    if (!updated) return;
+    let date;
+    try {
+      date = new Intl.DateTimeFormat(this.#dateLocale(), { dateStyle: 'long', ...(updated.dateOnly ? { timeZone: 'UTC' } : {}) }).format(updated.time);
+    } catch {
+      return; // a moment no calendar can write (far out of range)
+    }
+    this.#ui.content.append(h('p', { class: 'mpv-updated', part: 'updated' }, h('time', { datetime: updated.iso }, this.#text('updated', date))));
+  }
+
+  /** The built-in locale the words are in (texts.js), for writing dates the same way. */
+  #dateLocale() {
+    const { locale } = this.#options;
+    return (typeof locale === 'string' && locale.trim() !== '' && findLocale(locale)) || DEFAULT_LOCALE;
   }
 
   // ---- links to headings (spec 5.4) ----
