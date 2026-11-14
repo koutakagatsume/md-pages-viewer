@@ -112,6 +112,9 @@ const ICONS = {
   external: () => icon(['path', { d: 'M14 4h6v6' }], ['path', { d: 'M20 4l-9 9' }], ['path', { d: 'M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5' }]),
 };
 
+// How long the search words must stay the same before the host is told of the search (ms, spec 5.11).
+const SEARCH_EVENT_DELAY = 1000;
+
 // How long "copied" stays by the button that copied a link to a heading (ms).
 const COPIED_TIME = 1500;
 
@@ -415,6 +418,13 @@ export class MdPagesViewerElement extends HTMLElement {
   #zoomFrom = null;
   // The button that copied a link to a heading -> the timer that puts it back.
   #copyTimers = new WeakMap();
+  // Events for the host (spec 5.11): the id of the page last told of (null:
+  // none yet), and for the search, the number of results of the words in
+  // the box, the timer that waits for them to settle, and the words last told of.
+  #shownId = null;
+  #searchCount = 0;
+  #searchEventTimer = 0;
+  #searchReported = null;
   #spyFrame = 0;
   // Where the body was last scrolled to (see #readingPlace), kept for a change
   // of the height mode.
@@ -543,7 +553,10 @@ export class MdPagesViewerElement extends HTMLElement {
       // Someone is about to search: start reading the page bodies now.
       this.#prepareSearch();
     });
-    this.#ui.search.addEventListener('input', () => this.#runSearch({ readMs: SEARCH_READ_ON_INPUT_MS }));
+    this.#ui.search.addEventListener('input', () => {
+      this.#runSearch({ readMs: SEARCH_READ_ON_INPUT_MS });
+      this.#scheduleSearchEvent();
+    });
     this.#ui.search.addEventListener('keydown', (event) => this.#onSearchKey(event));
     // In quirks mode the probe's height:100% resolves against the viewport
     // and would push the host's layout; another check is used there.
@@ -648,6 +661,8 @@ export class MdPagesViewerElement extends HTMLElement {
     if (this.#spyFrame) cancelAnimationFrame(this.#spyFrame);
     this.#spyFrame = 0;
     this.#releaseToc(false);
+    clearTimeout(this.#searchEventTimer);
+    this.#searchEventTimer = 0;
     // Taken out of the page, a modal dialog leaves the top layer but stays
     // open: it would come back as part of the page.
     this.#closeZoom();
@@ -749,6 +764,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#displayed = null;
     this.#clearBodyCache();
     this.#closeZoom();
+    this.#shownId = null;
     this.#ui.status.hidden = true;
     this.#ui.layout.hidden = true;
   }
@@ -969,6 +985,15 @@ export class MdPagesViewerElement extends HTMLElement {
   #show(target, how) {
     const nav = ++this.#navToken;
     this.#displayed = target;
+    // Another page than the one shown before (spec 5.11). Told once this
+    // display is set up, so a listener that changes the page again does not
+    // run into it; the same page shown again (a new list) is not told of.
+    if (target.kind !== 'empty' && target.id !== this.#shownId) {
+      const previousId = this.#shownId;
+      const page = target.kind === 'page' ? this.#model.get(target.id) : undefined;
+      this.#shownId = target.id;
+      queueMicrotask(() => this.#emit('mpv-pagechange', { id: target.id, title: page ? page.title : null, previousId, found: page !== undefined }));
+    }
     this.#updateLanguage();
     // A height the host gave just before (in the same task) counts for where
     // this page scrolls to, before the size change is reported.
@@ -1465,6 +1490,41 @@ export class MdPagesViewerElement extends HTMLElement {
     if (from && this.#ui.content.contains(from) && from.hasAttribute('data-mpv-zoom')) from.focus({ preventScroll: true });
   }
 
+  // ---- events for the host (spec 5.11) ----
+
+  /**
+   * Tells the host something happened: an event on the element that bubbles
+   * and crosses shadow roots. Returns false when the host cancelled it (for
+   * the cancelable ones, the viewer then does nothing more).
+   */
+  #emit(name, detail, { cancelable = false } = {}) {
+    return this.dispatchEvent(new CustomEvent(name, { detail, bubbles: true, composed: true, cancelable }));
+  }
+
+  /** The search is told of once its words have stayed the same a while (#reportSearch). */
+  #scheduleSearchEvent() {
+    clearTimeout(this.#searchEventTimer);
+    this.#searchEventTimer = setTimeout(() => this.#reportSearch(), SEARCH_EVENT_DELAY);
+  }
+
+  /**
+   * mpv-search: the words searched for and how many results they found,
+   * once every page has been read for the search (or at once when a result
+   * is chosen: `now`). Each set of words once, until the box is emptied.
+   */
+  #reportSearch({ now = false } = {}) {
+    clearTimeout(this.#searchEventTimer);
+    this.#searchEventTimer = 0;
+    const query = this.#searchQuery;
+    if (query === '' || query === this.#searchReported) return;
+    if (!now && this.#searchReading()) {
+      this.#searchEventTimer = setTimeout(() => this.#reportSearch(), 200);
+      return;
+    }
+    this.#searchReported = query;
+    this.#emit('mpv-search', { query, resultCount: this.#searchCount });
+  }
+
   // ---- when the page was last updated (spec 5.4) ----
 
   /**
@@ -1508,6 +1568,8 @@ export class MdPagesViewerElement extends HTMLElement {
   #printPage() {
     const page = this.#shownPage();
     if (!page) return;
+    // The host may print its own way instead (spec 5.11).
+    if (!this.#emit('mpv-print', { id: page.id }, { cancelable: true })) return;
     let win = null;
     try {
       win = window.open('', '_blank');
@@ -1583,6 +1645,8 @@ export class MdPagesViewerElement extends HTMLElement {
     if (typeof text !== 'string') return;
     // Characters a file name cannot have on common systems.
     const name = page.title.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || page.id;
+    // The host may save it its own way instead (spec 5.11).
+    if (!this.#emit('mpv-download', { id: page.id, fileName: `${name}.md`, markdown: text }, { cancelable: true })) return;
     const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
     const link = h('a', { href: url, download: `${name}.md`, hidden: true });
     this.#ui.frame.append(link);
@@ -1685,7 +1749,10 @@ export class MdPagesViewerElement extends HTMLElement {
     const shown = this.#displayed;
     const name = this.#paramName();
     if (!heading || !shown || shown.kind !== 'page' || !name) return;
-    const ok = await this.#copyText(pageUrl(location.href, name, shown.id, heading.id));
+    const url = pageUrl(location.href, name, shown.id, heading.id);
+    // The host may copy it its own way instead (spec 5.11).
+    if (!this.#emit('mpv-copylink', { id: shown.id, hash: heading.id, url }, { cancelable: true })) return;
+    const ok = await this.#copyText(url);
     if (this.#ui.content.contains(button)) this.#showCopied(button, ok);
   }
 
@@ -2180,6 +2247,8 @@ export class MdPagesViewerElement extends HTMLElement {
     if (!inBody && link.dataset.mpvNav !== undefined) {
       event.preventDefault();
       if (this.#ui.searchResults.contains(link)) {
+        // The search is told of before the page it leads to (spec 5.11).
+        this.#reportSearch({ now: true });
         // Chosen: the search is done, and keys scroll the page again.
         this.#clearSearch();
         this.#ui.search.blur();
@@ -2279,6 +2348,8 @@ export class MdPagesViewerElement extends HTMLElement {
     if (words.length === 0 || !this.#model) {
       results.hidden = true;
       results.replaceChildren();
+      this.#searchCount = 0;
+      if (words.length === 0) this.#searchReported = null;
       return;
     }
     this.#prepareSearch();
@@ -2307,6 +2378,7 @@ export class MdPagesViewerElement extends HTMLElement {
     };
     visit(model.roots());
     found.sort((a, b) => a.rank - b.rank);
+    this.#searchCount = found.length;
 
     const name = this.#linkParamName();
     const note = (text) => h('p', { class: 'mpv-search-empty', part: 'search-empty' }, text);

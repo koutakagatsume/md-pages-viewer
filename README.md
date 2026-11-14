@@ -278,6 +278,48 @@ viewer.texts = {
 
 組み込み先が `page` を使っている場合は `urlParam` で名前を変えてください。同じ画面に2つ置く場合や、組み込み先が URL の `#` で画面を切り替えている場合は `urlParam` を `false` にしてください。
 
+## イベント
+
+画面で起きたことを、要素のイベントで組み込み先に知らせます。アクセス解析への記録や、ページ名を組み込み先の題名に出すときなどに使います。内容は `event.detail` に入ります。イベントは上の要素へ伝わるので、`document` で受け取ることもできます。
+
+| イベント | 送るとき | `event.detail` |
+| --- | --- | --- |
+| `mpv-pagechange` | 表示するページが変わったとき（最初の表示を含む）。同じページの中の見出しへの移動では送りません。届いたときには、URL の `?page=` はもうそのページになっています | `id`・`title`（ページ名。一覧にない ID は `null`）・`previousId`（前のページの ID。最初は `null`）・`found`（一覧にあるか） |
+| `mpv-search` | 検索欄の語が1秒変わらなかったとき（ページが多くて本文を読んでいる間は、読み終えるまで待ちます）と、検索の結果を選んだとき。同じ語は、検索欄を空にするまで続けて送りません | `query`（検索の語）・`resultCount`（見つかった全部の数） |
+| `mpv-copylink` | 見出しへのリンクのボタンを押したとき | `id`・`hash`（見出しの ID）・`url`（コピーする URL） |
+| `mpv-print` | PDF のボタンを押したとき | `id` |
+| `mpv-download` | Markdown のボタンを押したとき | `id`・`fileName`（ファイル名）・`markdown`（ファイルの中身） |
+
+```html
+<md-pages-viewer pages="./pages.json"></md-pages-viewer>
+<script>
+  const viewer = document.querySelector('md-pages-viewer');
+  viewer.addEventListener('mpv-pagechange', (event) => {
+    const { title } = event.detail;
+    document.title = `${title ?? 'ページが見つかりません'} | マニュアル`;
+    // アクセス解析に記録する（例：Google アナリティクス）
+    gtag('event', 'page_view', { page_title: title, page_location: location.href });
+  });
+  viewer.addEventListener('mpv-search', (event) => {
+    gtag('event', 'search', { search_term: event.detail.query });
+  });
+</script>
+```
+
+`new MdPagesViewer` で作った場合は、戻り値の `element` で受け取ります（`viewer.element.addEventListener(...)`）。作った直後に受け取り始めれば、最初のページの `mpv-pagechange` も届きます。
+
+`mpv-copylink`・`mpv-print`・`mpv-download` は、`event.preventDefault()` で取り消せます。取り消すと、ライブラリはコピー・印刷・ダウンロードをしません。組み込み先が自分の方法で行うときに使います。
+
+```js
+viewer.addEventListener('mpv-download', (event) => {
+  event.preventDefault();
+  // 例：組み込み先の画面で保存する
+  saveMarkdown(event.detail.fileName, event.detail.markdown);
+});
+```
+
+Ctrl+P などブラウザの印刷は、ライブラリを通らないので `mpv-print` を送りません。組み込み先の `window` の `beforeprint` で受け取れます。
+
 ## 見た目の変更
 
 次の CSS 変数で上書きできます。文字色とフォントは、指定しなければ組み込み先の設定を引き継ぎます。
