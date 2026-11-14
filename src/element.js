@@ -416,6 +416,9 @@ export class MdPagesViewerElement extends HTMLElement {
   // The button that copied a link to a heading -> the timer that puts it back.
   #copyTimers = new WeakMap();
   #spyFrame = 0;
+  // Where the body was last scrolled to (see #readingPlace), kept for a change
+  // of the height mode.
+  #place = null;
   // Scroll events do not cross shadow boundaries, so both our own shadow
   // root (the body column) and the document (the window and host elements)
   // are listened to, in the capture phase. One update per frame.
@@ -429,6 +432,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#spyFrame = requestAnimationFrame(() => {
       this.#spyFrame = 0;
       this.#updateTocCurrent();
+      this.#place = this.#readingPlace();
     });
   };
   #onPopState = () => this.#handlePopState();
@@ -545,7 +549,7 @@ export class MdPagesViewerElement extends HTMLElement {
     // and would push the host's layout; another check is used there.
     if (document.compatMode === 'BackCompat') this.#ui.probe.hidden = true;
     this.#resizeObserver = new ResizeObserver(() => {
-      this.#updateHeightMode();
+      this.#updateHeightMode({ keepPlace: true });
       this.#updateToolbar();
       this.#updateFollow();
     });
@@ -966,6 +970,10 @@ export class MdPagesViewerElement extends HTMLElement {
     const nav = ++this.#navToken;
     this.#displayed = target;
     this.#updateLanguage();
+    // A height the host gave just before (in the same task) counts for where
+    // this page scrolls to, before the size change is reported.
+    this.#updateHeightMode();
+    this.#updateFollow();
     this.#closeSidebar();
 
     // No pages: nothing in the toolbar or the sidebar can be used.
@@ -1908,8 +1916,48 @@ export class MdPagesViewerElement extends HTMLElement {
     if (this.#ui.frame.style.getPropertyValue('--_jump-top') !== jump) this.#ui.frame.style.setProperty('--_jump-top', jump);
   }
 
-  #updateHeightMode() {
-    this.#ui.frame.dataset.height = this.#hostHasHeight() ? 'fixed' : 'auto';
+  /**
+   * The height mode (spec 6): whether the host gave the element a height.
+   * Read when connected, before each page is shown (a height the host set
+   * just now counts already) and when the element's size changes. When it
+   * changes under a body that was scrolled (the host set or removed a height
+   * later), the place being read stays in view: the scrolling moves from the
+   * page into the body, or back.
+   */
+  #updateHeightMode({ keepPlace = false } = {}) {
+    const frame = this.#ui.frame;
+    const mode = this.#hostHasHeight() ? 'fixed' : 'auto';
+    if (frame.dataset.height === mode) return;
+    // The place as last scrolled to: by now the body may no longer scroll in
+    // the element (the height was taken away), and its scrolling is gone.
+    const last = this.#place && this.#ui.content.contains(this.#place.block) ? this.#place : null;
+    const place = keepPlace ? (last ?? this.#readingPlace()) : null;
+    frame.dataset.height = mode;
+    if (place) this.#restoreReadingPlace(place);
+  }
+
+  /** The first block of the body not yet scrolled past, and how far below the top of the view it is. */
+  #readingPlace() {
+    if (this.#ui.content.hidden) return null;
+    const { top } = this.#readingView();
+    for (const block of this.#ui.content.children) {
+      const box = block.getBoundingClientRect();
+      if (box.bottom > top) return { block, offset: box.top - top };
+    }
+    return null;
+  }
+
+  #restoreReadingPlace({ block, offset }) {
+    if (!this.#ui.content.contains(block)) return;
+    const delta = block.getBoundingClientRect().top - this.#readingView().top - offset;
+    if (Math.abs(delta) < 1) return;
+    if (this.#ui.frame.dataset.height === 'fixed') {
+      this.#ui.main.scrollTop += delta;
+      return;
+    }
+    const base = scrollBase(this);
+    if (base) base.scrollTop += delta;
+    else window.scrollBy(0, delta);
   }
 
   /**

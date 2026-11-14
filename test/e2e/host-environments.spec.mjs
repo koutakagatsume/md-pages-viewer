@@ -370,3 +370,62 @@ test('[表示/固定ヘッダー] 狭い表示幅で開いたページ一覧も�
   expect(fixed.toolbar.top).toBe(fixed.viewer);
   expect(fixed.sidebar.top).toBe(fixed.toolbar.bottom);
 });
+
+// ---- a height the host gives after the element is placed (spec 6) ----
+
+/** The top of the heading less where the body is read from (the top of the scrolling body, or just under the toolbar). */
+const fromViewTop = (viewer, text) =>
+  viewer.evaluate((el, text) => {
+    const s = el.shadowRoot;
+    const fixed = s.querySelector('.mpv').dataset.height === 'fixed';
+    const top = fixed ? s.querySelector('.mpv-main').getBoundingClientRect().top : Math.max(0, s.querySelector('.mpv-toolbar').getBoundingClientRect().bottom);
+    const h = [...s.querySelectorAll('.mpv-content h2')].find((n) => n.textContent === text);
+    return { mode: s.querySelector('.mpv').dataset.height, offset: Math.round(h.getBoundingClientRect().top - top) || 0 };
+  }, text);
+
+test('[表示/高さ] 要素を置いた後に組み込み先が高さを付け、すぐページを渡しても、#見出し 付きで開くとその見出しが本文の場所の上端に出る', async ({ page }) => {
+  await page.goto(`${BLANK}?page=a#${encodeURIComponent('章四')}`);
+  await page.evaluate((pages) => {
+    const el = document.createElement('md-pages-viewer');
+    document.body.append(el);
+    // 置いた後の同じ処理の中で、高さとページを渡す
+    el.style.height = '400px';
+    el.pages = pages;
+  }, HEADER_PAGES);
+  const viewer = page.locator('md-pages-viewer');
+  await expect(content(viewer).locator('h1')).toHaveText('A');
+  await expect.poll(() => fromViewTop(viewer, '章四')).toEqual({ mode: 'fixed', offset: 0 });
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+});
+
+test('[表示/高さ] 読んでいる途中で組み込み先が高さを付けたり外したりしても、読んでいる所がそのまま見える', async ({ page }) => {
+  // 高さなしで #章四 に移った後に、高さを付ける
+  await page.goto(`${BLANK}?page=a#${encodeURIComponent('章四')}`);
+  await page.evaluate((pages) => {
+    const el = document.createElement('md-pages-viewer');
+    el.pages = pages;
+    document.body.append(el);
+  }, HEADER_PAGES);
+  const viewer = page.locator('md-pages-viewer');
+  await expect(content(viewer).locator('h1')).toHaveText('A');
+  await expect.poll(() => fromViewTop(viewer, '章四')).toEqual({ mode: 'auto', offset: 8 });
+  await viewer.evaluate((el) => (el.style.height = '400px'));
+  await expect.poll(() => fromViewTop(viewer, '章四')).toEqual({ mode: 'fixed', offset: 8 });
+
+  // 本文の場所の中で読み進めてから、高さを外す・付け直す
+  await viewer.evaluate((el) => {
+    const s = el.shadowRoot;
+    const main = s.querySelector('.mpv-main');
+    const h = [...s.querySelectorAll('.mpv-content h2')].find((n) => n.textContent === '章二');
+    main.scrollTop += h.getBoundingClientRect().top - main.getBoundingClientRect().top - 100;
+  });
+  await expect.poll(() => fromViewTop(viewer, '章二')).toEqual({ mode: 'fixed', offset: 100 });
+  // 本文の場所のスクロールバーの分だけ本文の幅が変わり、行の折り返しが少し変わることがあるので、20px までの違いは同じ所とみなす
+  const near = async (mode) => { const r = await fromViewTop(viewer, '章二'); return r.mode === mode && Math.abs(r.offset - 100) <= 20; };
+  await wait(100);
+  await viewer.evaluate((el) => (el.style.height = ''));
+  await expect.poll(() => near('auto')).toBe(true);
+  await wait(100);
+  await viewer.evaluate((el) => (el.style.height = '400px'));
+  await expect.poll(() => near('fixed')).toBe(true);
+});
