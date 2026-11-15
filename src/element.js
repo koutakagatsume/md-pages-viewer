@@ -11,7 +11,7 @@ import { DEFAULT_LOCALE, findLocale, resolveTexts } from './texts.js';
 export const TAG = 'md-pages-viewer';
 
 // Every option: a property of the element, and of `new MdPagesViewer` (viewer.js).
-export const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts', 'feedback', 'printButton', 'markdownButton'];
+export const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts', 'feedback', 'printButton', 'markdownButton', 'searchMark'];
 const ATTRIBUTES = {
   pages: 'pages',
   'current-id': 'currentId',
@@ -21,7 +21,15 @@ const ATTRIBUTES = {
   feedback: 'feedback',
   'print-button': 'printButton',
   'markdown-button': 'markdownButton',
+  'search-mark': 'searchMark',
 };
+
+// How the words of a chosen search result are marked in the body (searchMark, spec 5.4).
+const SEARCH_MARK_MODES = ['bar', 'nav', 'mark', 'off'];
+
+// Words in these are not marked: our controls, our words (the callout titles,
+// which the search leaves out too) and what we add after the body.
+const HIT_SKIP = 'button, svg, script, style, textarea, .mpv-callout-title, .mpv-updated, .mpv-related, .mpv-visually-hidden';
 
 /** At most this many search results are listed (spec 5.4). */
 const SEARCH_RESULTS_SHOWN = 50;
@@ -90,6 +98,9 @@ const ICONS = {
     for (const [name, value] of [['width', '20'], ['height', '20'], ['stroke-width', '2.4']]) svg.setAttribute(name, value);
     return svg;
   },
+  // The bar of the words searched for ("nav"): to the previous and the next mark.
+  previous: () => icon(['path', { d: 'M6 15l6-6 6 6' }]),
+  next: () => icon(['path', { d: 'M6 9l6 6 6-6' }]),
   // The button that copies a link to a heading, and what it shows once copied.
   link: () => {
     const svg = icon(['path', { d: 'M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.5' }], ['path', { d: 'M14 11a5 5 0 0 0-7.07 0l-2.83 2.83a5 5 0 0 0 7.07 7.07l1.33-1.33' }]);
@@ -181,6 +192,8 @@ function buildParts() {
           { class: 'mpv-main', part: 'main' },
           h('details', { class: 'mpv-toc-mobile', part: 'toc-mobile', hidden: true }, h('summary', {}), tocList()),
           h('div', { class: 'mpv-body-status', part: 'status', role: 'status', hidden: true }, h('p', { class: 'mpv-body-status-text' }), retryButton('mpv-body-retry')),
+          // The words of the search result chosen, marked in the body below (spec 5.4).
+          h('div', { class: 'mpv-hit-bar', part: 'search-hit-bar', hidden: true }),
           h('article', { class: 'mpv-content', part: 'content' }),
           // "Was this page helpful?" (spec 5.4), when the host asks for it.
           h('div', { class: 'mpv-feedback', part: 'feedback', role: 'group', hidden: true }),
@@ -301,6 +314,37 @@ function markedText(original, words, start = 0, end = original.length) {
   return fragment;
 }
 
+/**
+ * Marks every place in the text of `root` where any of `words` occurs, as
+ * the search matches them (spec 5.4), with <mark part="search-hit">. A
+ * match split across elements (a word half in bold) is not marked.
+ * @returns {HTMLElement[]} the marks, in document order
+ */
+function markHits(root, words) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode: (node) => (node.parentElement.closest(HIT_SKIP) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT),
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+  const marks = [];
+  for (const node of nodes) {
+    const ranges = matchRanges(node.data, words);
+    if (ranges.length === 0) continue;
+    const fragment = document.createDocumentFragment();
+    let at = 0;
+    for (const [from, to] of ranges) {
+      if (from > at) fragment.append(node.data.slice(at, from));
+      const mark = h('mark', { class: 'mpv-hit', part: 'search-hit' }, node.data.slice(from, to));
+      fragment.append(mark);
+      marks.push(mark);
+      at = to;
+    }
+    if (at < node.data.length) fragment.append(node.data.slice(at));
+    node.replaceWith(fragment);
+  }
+  return marks;
+}
+
 /** A short part of `text` around the first match, with ellipses where it was cut. */
 function snippetOf(text, words) {
   const first = matchRanges(text, words)[0];
@@ -360,7 +404,7 @@ export class MdPagesViewerElement extends HTMLElement {
     return Object.keys(ATTRIBUTES);
   }
 
-  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined, feedback: undefined, printButton: undefined, markdownButton: undefined };
+  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined, feedback: undefined, printButton: undefined, markdownButton: undefined, searchMark: undefined };
   // The words on our parts (spec 5.10): made from locale and texts when first
   // needed, and again after either changes.
   #words = null;
@@ -440,6 +484,11 @@ export class MdPagesViewerElement extends HTMLElement {
   // Whether the body shown has the PDF and Markdown buttons (a page's body,
   // not a child index or a status); each is shown unless the host turned it off.
   #toolsShown = false;
+  // The words of the search result chosen (spec 5.4): marked in the body of
+  // the page it opened while that page is shown. index: the current mark
+  // ("nav"), -1 until the marks are first made.
+  /** @type {null | {query: string, words: string[], pageId: string, hash: string, marks: HTMLElement[], index: number}} */
+  #hits = null;
   // Events for the host (spec 5.11): the id of the page last told of (null:
   // none yet), and for the search, the number of results of the words in
   // the box, the timer that waits for them to settle, and the words last told of.
@@ -539,6 +588,7 @@ export class MdPagesViewerElement extends HTMLElement {
       main: $('.mpv-main'),
       pager: $('.mpv-pager'),
       feedback: $('.mpv-feedback'),
+      hitBar: $('.mpv-hit-bar'),
       breadcrumb: $('.mpv-breadcrumb'),
       tocMobile: $('.mpv-toc-mobile'),
       bodyStatus: $('.mpv-body-status'),
@@ -594,6 +644,20 @@ export class MdPagesViewerElement extends HTMLElement {
       const button = event.target.closest('[data-mpv-feedback]');
       if (button) this.#answerFeedback(button.dataset.mpvFeedback === 'yes');
     });
+    this.#ui.hitBar.addEventListener('click', (event) => {
+      const button = event.target.closest('[data-mpv-hit]');
+      if (!button) return;
+      const kind = button.dataset.mpvHit;
+      if (kind !== 'clear') {
+        this.#stepHit(kind === 'next' ? 1 : -1);
+        return;
+      }
+      // From the keys, on to the search box, as the button goes. A tap does
+      // not move there (it would bring up the keyboard on a phone).
+      const fromKeys = button.matches(':focus-visible');
+      this.#clearHits();
+      if (fromKeys) this.#ui.search.focus({ preventScroll: true });
+    });
   }
 
   // ---- options ----
@@ -620,6 +684,8 @@ export class MdPagesViewerElement extends HTMLElement {
   set printButton(value) { this.#setOption('printButton', value); }
   get markdownButton() { return this.#options.markdownButton; }
   set markdownButton(value) { this.#setOption('markdownButton', value); }
+  get searchMark() { return this.#options.searchMark; }
+  set searchMark(value) { this.#setOption('searchMark', value); }
   get styles() { return this.#options.styles; }
   set styles(value) {
     // Only the look changes, so it applies at once without drawing again.
@@ -673,6 +739,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#resizeObserver.observe(this.#ui.probe);
     this.#resizeObserver.observe(this);
     this.#resizeObserver.observe(this.#ui.toolbar);
+    this.#resizeObserver.observe(this.#ui.hitBar);
     window.addEventListener('resize', this.#onWindowResize);
     this.shadowRoot.addEventListener('scroll', this.#onSpyScroll, { capture: true, passive: true });
     document.addEventListener('scroll', this.#onSpyScroll, { capture: true, passive: true });
@@ -752,6 +819,7 @@ export class MdPagesViewerElement extends HTMLElement {
     if (changed.has('locale') || changed.has('texts')) this.#applyTexts();
     // The buttons too: they are on the body shown, whatever is on its way.
     if (changed.has('printButton') || changed.has('markdownButton')) this.#renderTools();
+    if (changed.has('searchMark')) this.#onSearchMarkChanged();
 
     if (pages === undefined || pages === null) {
       this.#reset();
@@ -801,6 +869,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#clearBodyCache();
     this.#closeZoom();
     this.#shownId = null;
+    this.#hits = null;
     this.#ui.status.hidden = true;
     this.#ui.layout.hidden = true;
   }
@@ -1021,6 +1090,8 @@ export class MdPagesViewerElement extends HTMLElement {
   #show(target, how) {
     const nav = ++this.#navToken;
     this.#displayed = target;
+    // The words searched for stay marked only on the page they were searched for in.
+    if (this.#hits && (target.kind === 'empty' || target.id !== this.#hits.pageId)) this.#hits = null;
     // Another page than the one shown before (spec 5.11). Told once this
     // display is set up, so a listener that changes the page again does not
     // run into it; the same page shown again (a new list) is not told of.
@@ -1400,6 +1471,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#ui.feedback.hidden = true;
     this.#toolsShown = false;
     this.#renderTools();
+    this.#hideHitBar();
     this.#ui.bodyStatus.hidden = true;
     this.#ui.content.hidden = false;
     this.#ui.content.replaceChildren(fragment);
@@ -1409,6 +1481,8 @@ export class MdPagesViewerElement extends HTMLElement {
     const toc = assignHeadingIds(this.#ui.content, taken)
       .filter((heading) => heading.localName === 'h2' || heading.localName === 'h3')
       .map((heading) => ({ id: heading.id, level: heading.localName, text: heading.textContent.trim(), heading }));
+    // Before it scrolls: the bar above the body moves the body down.
+    this.#applyHits();
     this.#setToc(toc);
     this.#scroll(how, true);
     this.#updateTocCurrent();
@@ -2181,6 +2255,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#ui.toolbar.style.translate = '';
     this.#ui.sidebar.style.translate = '';
     this.#ui.toc.style.translate = '';
+    this.#ui.hitBar.style.translate = '';
   }
 
   // The toolbar stays at the top of the view (below the host's fixed header,
@@ -2203,6 +2278,24 @@ export class MdPagesViewerElement extends HTMLElement {
       const offset = sticky ? Math.max(0, Math.min(scrolled, room)) : 0;
       part.style.translate = offset > 0 ? `0 ${offset}px` : '';
     }
+    this.#placeHitBar(viewTop + bar);
+  }
+
+  /**
+   * The bar of the words searched for with "previous" and "next" stays just
+   * under the toolbar while the body goes by, moved by hand like the side
+   * columns where sticky cannot (#placeSideColumns). `top`: where it stays.
+   */
+  #placeHitBar(top) {
+    const bar = this.#ui.hitBar;
+    const shift = parseFloat(bar.style.translate.split(' ')[1]) || 0;
+    let offset = 0;
+    if (!bar.hidden && getComputedStyle(bar).position === 'sticky') {
+      const rest = bar.getBoundingClientRect().top - shift;
+      const end = this.#ui.content.getBoundingClientRect().bottom - bar.offsetHeight;
+      offset = Math.max(0, Math.min(top - rest, end - rest));
+    }
+    bar.style.translate = offset > 0 ? `0 ${offset}px` : '';
   }
 
   #hostHasHeight() {
@@ -2351,14 +2444,19 @@ export class MdPagesViewerElement extends HTMLElement {
 
     if (!inBody && link.dataset.mpvNav !== undefined) {
       event.preventDefault();
+      const id = link.dataset.mpvNav;
+      const hash = link.dataset.mpvNavHash || '';
       if (this.#ui.searchResults.contains(link)) {
+        const query = this.#searchQuery;
         // The search is told of before the page it leads to (spec 5.11).
         this.#reportSearch({ now: true });
         // Chosen: the search is done, and keys scroll the page again.
         this.#clearSearch();
         this.#ui.search.blur();
+        // Its words are marked in the body of the page it opens (spec 5.4).
+        this.#startHits(query, id, hash);
       }
-      this.#navigate(link.dataset.mpvNav, link.dataset.mpvNavHash || '');
+      this.#navigate(id, hash);
       this.#closeSidebar();
       return;
     }
@@ -2410,6 +2508,13 @@ export class MdPagesViewerElement extends HTMLElement {
     if (this.#ui.viewToggle.textContent !== viewLabel) this.#ui.viewToggle.textContent = viewLabel;
     const barHeight = `${this.#ui.toolbar.offsetHeight}px`;
     if (frame.style.getPropertyValue('--_bar-h') !== barHeight) frame.style.setProperty('--_bar-h', barHeight);
+    // The bar of the words searched for, when it stays in view ("nav"): a heading jumped to lands below it too.
+    const hitBar = this.#ui.hitBar;
+    const hitHeight = !hitBar.hidden && hitBar.dataset.mode === 'nav' ? `${hitBar.offsetHeight}px` : '';
+    if (frame.style.getPropertyValue('--_hit-h') !== hitHeight) {
+      if (hitHeight) frame.style.setProperty('--_hit-h', hitHeight);
+      else frame.style.removeProperty('--_hit-h');
+    }
     this.#updateJumpTop();
   }
 
@@ -2643,6 +2748,148 @@ export class MdPagesViewerElement extends HTMLElement {
   }
 
 
+  // ---- the words of a search result, marked in the body (spec 5.4) ----
+
+  /** How the host wants them marked (searchMark): "bar" unless it said otherwise; false is "off". */
+  #searchMarkMode() {
+    const value = this.#options.searchMark;
+    if (value === false) return 'off';
+    return SEARCH_MARK_MODES.includes(value) ? value : 'bar';
+  }
+
+  #onSearchMarkChanged() {
+    const value = this.#options.searchMark;
+    if (value !== undefined && value !== null && value !== false && value !== '' && !SEARCH_MARK_MODES.includes(value)) {
+      warn(`searchMark must be ${SEARCH_MARK_MODES.map((mode) => `"${mode}"`).join(', ')}; "bar" is used.`);
+    }
+    // The marks shown now follow at once.
+    if (this.#hits) this.#applyHits();
+  }
+
+  /**
+   * A search result was chosen: its words are to be marked in the body of
+   * the page it opens. Marked now if that page is shown; otherwise when its
+   * body is put in (#putBody).
+   */
+  #startHits(query, pageId, hash) {
+    this.#clearHits();
+    const words = searchWords(query);
+    if (words.length === 0 || this.#searchMarkMode() === 'off') return;
+    this.#hits = { query, words, pageId, hash, marks: [], index: -1 };
+    this.#applyHits();
+  }
+
+  /**
+   * Marks the words in the body shown, if it is the page they were searched
+   * for in, and above the body, the bar ("bar", "nav"): how many places, and
+   * the buttons. Done again whenever that body is put in again (a language,
+   * the list/card switch), the current mark kept.
+   */
+  #applyHits() {
+    this.#unmarkHits();
+    const hits = this.#hits;
+    const shown = this.#displayed;
+    if (!hits || !shown || shown.kind !== 'page' || shown.id !== hits.pageId || this.#ui.content.hidden) return;
+    const mode = this.#searchMarkMode();
+    if (mode === 'off') {
+      this.#hits = null;
+      return;
+    }
+    hits.marks = markHits(this.#ui.content, hits.words);
+    if (hits.marks.length === 0 || mode === 'mark') return;
+    const button = (kind, key, iconOf) =>
+      h('button', { type: 'button', class: 'mpv-hit-button', part: `search-hit-button ${kind}`, 'data-mpv-hit': kind }, iconOf(), this.#text(key));
+    const tools = [];
+    if (mode === 'nav') {
+      tools.push(button('previous', 'searchHitsPrevious', ICONS.previous), h('span', { class: 'mpv-hit-count', part: 'search-hit-count' }), button('next', 'searchHitsNext', ICONS.next));
+    }
+    tools.push(button('clear', 'searchHitsClear', ICONS.close));
+    const bar = this.#ui.hitBar;
+    bar.dataset.mode = mode;
+    bar.replaceChildren(
+      h('span', { class: 'mpv-hit-text', part: 'search-hit-text', role: 'status' }, this.#text('searchHits', { query: hits.query, count: hits.marks.length })),
+      h('span', { class: 'mpv-hit-tools' }, ...tools),
+    );
+    bar.hidden = false;
+    if (mode === 'nav') {
+      // The first time, from the first mark after the heading the result opened.
+      let index = hits.index;
+      if (index < 0) {
+        const heading = this.#findInBody(hits.hash);
+        index = heading ? hits.marks.findIndex((mark) => heading.compareDocumentPosition(mark) & Node.DOCUMENT_POSITION_FOLLOWING) : 0;
+      }
+      this.#setCurrentHit(Math.min(Math.max(index, 0), hits.marks.length - 1), false);
+    }
+    this.#updateToolbar();
+    this.#placeSideColumns();
+  }
+
+  /** Takes the marks out of the body (their words stay as they were) and hides the bar. */
+  #unmarkHits() {
+    for (const mark of this.#ui.content.querySelectorAll('mark.mpv-hit')) {
+      const parent = mark.parentNode;
+      mark.replaceWith(...mark.childNodes);
+      parent.normalize();
+    }
+    if (this.#hits) this.#hits.marks = [];
+    this.#hideHitBar();
+  }
+
+  #hideHitBar() {
+    const bar = this.#ui.hitBar;
+    if (bar.hidden) return;
+    bar.hidden = true;
+    bar.replaceChildren();
+    bar.style.translate = '';
+    this.#updateToolbar();
+  }
+
+  /** The marks go, and the words are forgotten ("clear", another result). */
+  #clearHits() {
+    this.#unmarkHits();
+    this.#hits = null;
+  }
+
+  /** "Previous" and "next" ("nav"): the mark before or after the current one, brought into view; round from the last to the first. */
+  #stepHit(step) {
+    const hits = this.#hits;
+    if (!hits || hits.marks.length === 0) return;
+    const count = hits.marks.length;
+    this.#setCurrentHit((hits.index + step + count) % count, true);
+  }
+
+  #setCurrentHit(index, reveal) {
+    const hits = this.#hits;
+    hits.index = index;
+    hits.marks.forEach((mark, i) => {
+      const current = i === index;
+      mark.classList.toggle('mpv-hit-current', current);
+      mark.part.toggle('current', current);
+    });
+    const count = this.#ui.hitBar.querySelector('.mpv-hit-count');
+    if (count) count.textContent = `${index + 1} / ${hits.marks.length}`;
+    if (reveal) this.#revealHit(hits.marks[index]);
+  }
+
+  /**
+   * Brings a mark to the middle of the view: across a wide table or code
+   * block, and up or down the viewer's scroller (the body's column with a
+   * height set, or the host's), not any further out.
+   */
+  #revealHit(mark) {
+    const smooth = !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const wide = mark.parentElement.closest('pre, .mpv-table-scroll');
+    if (wide && wide.scrollWidth > wide.clientWidth) {
+      const box = wide.getBoundingClientRect();
+      const at = mark.getBoundingClientRect();
+      wide.scrollLeft += at.left + at.width / 2 - (box.left + box.width / 2);
+    }
+    const base = this.#ui.frame.dataset.height === 'fixed' ? this.#ui.main : scrollBase(this);
+    const view = base ? base.getBoundingClientRect() : { top: 0, height: window.innerHeight };
+    const at = mark.getBoundingClientRect();
+    (base ?? window).scrollBy({ top: at.top + at.height / 2 - (view.top + view.height / 2), behavior: smooth ? 'smooth' : 'auto' });
+  }
+
   // ---- rendering parts ----
 
   /** `key` names the words (see texts.js); kept so they change with the language. */
@@ -2662,6 +2909,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#ui.feedback.hidden = true;
     this.#toolsShown = false;
     this.#renderTools();
+    this.#hideHitBar();
     this.#markChildIndex(false);
     this.#renderPager(null);
     this.#updateToolbar();

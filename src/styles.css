@@ -166,7 +166,13 @@
    nor under the host's fixed header (--_jump-top: the offset, less what the
    scroller's own scroll-padding-top already keeps clear; set by the element). */
 .mpv[data-height='auto'] .mpv-content [id] {
-  scroll-margin-top: calc(var(--_jump-top, 0px) + var(--_bar-h, 0px) + 8px);
+  scroll-margin-top: calc(var(--_jump-top, 0px) + var(--_bar-h, 0px) + var(--_hit-h, 0px) + 8px);
+}
+
+/* ...and below the bar of the words searched for, when it stays in view
+   ("nav"; --_hit-h: its height, set by the element). */
+.mpv[data-height='fixed'] .mpv-content [id] {
+  scroll-margin-top: var(--_hit-h, 0px);
 }
 
 /* Height set by the host: each column scrolls on its own under the toolbar. */
@@ -992,6 +998,109 @@
   font-size: 0.85em;
   line-height: 1.5;
   text-align: right;
+}
+
+/* The words of the search result chosen, marked in the body of the page it
+   opened (spec 5.4), and the bar above the body that tells of them. */
+.mpv-hit {
+  color: inherit;
+  background: rgba(250, 204, 21, 0.45);
+  border-radius: 2px;
+}
+
+.mpv-hit-current {
+  background: rgba(249, 115, 22, 0.6);
+  outline: 2px solid rgba(234, 88, 12, 0.9);
+  outline-offset: 1px;
+}
+
+.mpv-hit-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4em 0.8em;
+  margin-top: var(--_space);
+  padding: 0.45em 0.6em 0.45em 0.9em;
+  border: 1px solid var(--_border);
+  border-radius: 8px;
+  background: var(--mpv-color-bg, Canvas);
+  font-size: 0.9em;
+  line-height: 1.5;
+}
+
+/* The color of the marks, as the key to the bar. */
+.mpv-hit-bar::before {
+  content: '';
+  flex: none;
+  width: 0.8em;
+  height: 0.8em;
+  border-radius: 2px;
+  background: rgba(250, 204, 21, 0.7);
+}
+
+.mpv-hit-text {
+  flex: 1;
+  min-width: 12em;
+}
+
+.mpv-hit-tools {
+  display: flex;
+  align-items: center;
+  gap: 0.3em;
+}
+
+.mpv-hit-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  padding: 0.2em 0.6em;
+  border: 1px solid var(--_border);
+  border-radius: 6px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.mpv-hit-button:hover,
+.mpv-hit-button:focus-visible {
+  border-color: var(--_accent);
+  color: var(--_accent);
+}
+
+.mpv-hit-button svg {
+  width: 1.1em;
+  height: 1.1em;
+  flex: none;
+}
+
+.mpv-hit-count {
+  min-width: 3.5em;
+  color: var(--_muted);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+/* With "previous" and "next" ("nav"), the bar stays in view under the
+   toolbar while the body goes by (like the side columns: moved by hand
+   instead where sticky cannot, see #placeHitBar). */
+.mpv-hit-bar[data-mode='nav'] {
+  position: sticky;
+  z-index: 1;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.mpv[data-height='auto'] .mpv-hit-bar[data-mode='nav'] {
+  top: calc(var(--_top) + var(--_bar-h, 0px));
+}
+
+.mpv[data-height='auto'][data-follow] .mpv-hit-bar[data-mode='nav'] {
+  top: var(--_bar-h, 0px);
+}
+
+.mpv[data-height='fixed'] .mpv-hit-bar[data-mode='nav'] {
+  top: 0;
 }
 
 /* "Was this page helpful?" (spec 5.4): at the end of the body, above the

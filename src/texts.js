@@ -6,8 +6,9 @@
  * Every key a locale has. A function takes the number or the search words
  * it shows (`toggle` takes the page's title, `zoomImage` the image's
  * alternative text, "" when it has none, `copyLink` the heading's words,
- * `updated` the date, already written the way of the language); every other
- * value is a string.
+ * `updated` the date, already written the way of the language, `searchHits`
+ * an object with the search words as typed and how many places are marked,
+ * `{ query, count }`); every other value is a string.
  */
 const JA = {
   loading: '読み込み中…',
@@ -56,6 +57,10 @@ const JA = {
   feedbackYes: 'はい',
   feedbackNo: 'いいえ',
   feedbackThanks: 'ご意見ありがとうございました。',
+  searchHits: ({ query, count }) => `「${query}」に一致する所に印を付けています（${count}か所）`,
+  searchHitsPrevious: '前へ',
+  searchHitsNext: '次へ',
+  searchHitsClear: '印を消す',
 };
 
 const EN = {
@@ -105,6 +110,10 @@ const EN = {
   feedbackYes: 'Yes',
   feedbackNo: 'No',
   feedbackThanks: 'Thank you for your feedback.',
+  searchHits: ({ query, count }) => `Highlighting “${query}” (${count} ${count === 1 ? 'match' : 'matches'})`,
+  searchHitsPrevious: 'Previous',
+  searchHitsNext: 'Next',
+  searchHitsClear: 'Clear highlights',
 };
 
 const ZH_CN = {
@@ -154,6 +163,10 @@ const ZH_CN = {
   feedbackYes: '是',
   feedbackNo: '否',
   feedbackThanks: '感谢您的反馈。',
+  searchHits: ({ query, count }) => `已标记与“${query}”匹配的位置（${count} 处）`,
+  searchHitsPrevious: '上一个',
+  searchHitsNext: '下一个',
+  searchHitsClear: '清除标记',
 };
 
 const ZH_TW = {
@@ -203,6 +216,10 @@ const ZH_TW = {
   feedbackYes: '是',
   feedbackNo: '否',
   feedbackThanks: '感謝您的意見。',
+  searchHits: ({ query, count }) => `已標示與「${query}」相符的位置（${count} 處）`,
+  searchHitsPrevious: '上一個',
+  searchHitsNext: '下一個',
+  searchHitsClear: '清除標示',
 };
 
 const KO = {
@@ -252,6 +269,10 @@ const KO = {
   feedbackYes: '예',
   feedbackNo: '아니요',
   feedbackThanks: '의견을 보내 주셔서 감사합니다.',
+  searchHits: ({ query, count }) => `“${query}”에 해당하는 곳을 표시하고 있습니다(${count}곳)`,
+  searchHitsPrevious: '이전',
+  searchHitsNext: '다음',
+  searchHitsClear: '표시 지우기',
 };
 
 export const DEFAULT_LOCALE = 'ja';

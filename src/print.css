@@ -17,12 +17,19 @@
 .mpv-toc-mobile,
 .mpv-pager,
 .mpv-feedback,
+.mpv-hit-bar,
 .mpv-backdrop,
 .mpv-search-box,
 .mpv-tool,
 .mpv-heading-link,
 .mpv-zoom {
   display: none !important;
+}
+
+/* The words a search marked are printed as the rest of the text. */
+.mpv-hit {
+  background: none !important;
+  outline: none !important;
 }
 
 /* Dark text on white paper, whatever the theme on screen. */
