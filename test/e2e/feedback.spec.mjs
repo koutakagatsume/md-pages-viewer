@@ -67,6 +67,18 @@ test('[表示/役に立ちましたか] feedback を指定したときだけ、�
   await expect(box(viewer)).toBeHidden();
 });
 
+test('[表示/役に立ちましたか] new MdPagesViewer のオプションでも feedback を指定できる', async ({ page }) => {
+  await page.goto(BLANK);
+  await page.evaluate((pages) => {
+    document.body.insertAdjacentHTML('beforeend', '<div id="target"></div>');
+    new window.MdPagesViewer('#target', { pages, currentId: 'a', urlParam: false, feedback: true });
+  }, PAGES);
+  const viewer = page.locator('#target md-pages-viewer');
+  await expect(content(viewer).locator('h1')).toHaveText('ページA');
+  await expect(box(viewer)).toBeVisible();
+  await expect(part(viewer, 'feedback-question')).toHaveText('このページは役に立ちましたか？');
+});
+
 test('[表示/役に立ちましたか] 子ページ一覧・本文のないページ・読み込めないページ・ないページには出さない', async ({ page }) => {
   await page.goto(BLANK);
   const viewer = await mount(page, { options: { pages: PAGES, currentId: 'b', urlParam: false, feedback: true } });

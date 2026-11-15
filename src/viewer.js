@@ -1,9 +1,7 @@
 // `new MdPagesViewer(target, options)` (spec 5.6): creates the element,
 // sets every option, then puts it into the target.
 
-import { TAG, defineElement } from './element.js';
-
-const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts'];
+import { TAG, OPTION_KEYS, defineElement } from './element.js';
 
 export class MdPagesViewer {
   /**
@@ -11,7 +9,8 @@ export class MdPagesViewer {
    * @param {{pages?: object[]|string, currentId?: string|number, baseUrl?: string,
    *   imageResolver?: (path: string, page: object) => string,
    *   fetch?: typeof fetch, urlParam?: string|false, styles?: string,
-   *   locale?: string, texts?: object}} [options]
+   *   locale?: string, texts?: object, feedback?: boolean,
+   *   printButton?: boolean, markdownButton?: boolean}} [options]
    */
   constructor(target, options = {}) {
     defineElement();

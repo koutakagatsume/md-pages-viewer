@@ -10,8 +10,18 @@ import { DEFAULT_LOCALE, findLocale, resolveTexts } from './texts.js';
 
 export const TAG = 'md-pages-viewer';
 
-const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts', 'feedback'];
-const ATTRIBUTES = { pages: 'pages', 'current-id': 'currentId', 'base-url': 'baseUrl', 'url-param': 'urlParam', locale: 'locale', feedback: 'feedback' };
+// Every option: a property of the element, and of `new MdPagesViewer` (viewer.js).
+export const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts', 'feedback', 'printButton', 'markdownButton'];
+const ATTRIBUTES = {
+  pages: 'pages',
+  'current-id': 'currentId',
+  'base-url': 'baseUrl',
+  'url-param': 'urlParam',
+  locale: 'locale',
+  feedback: 'feedback',
+  'print-button': 'printButton',
+  'markdown-button': 'markdownButton',
+};
 
 /** At most this many search results are listed (spec 5.4). */
 const SEARCH_RESULTS_SHOWN = 50;
@@ -350,7 +360,7 @@ export class MdPagesViewerElement extends HTMLElement {
     return Object.keys(ATTRIBUTES);
   }
 
-  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined, feedback: undefined };
+  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined, feedback: undefined, printButton: undefined, markdownButton: undefined };
   // The words on our parts (spec 5.10): made from locale and texts when first
   // needed, and again after either changes.
   #words = null;
@@ -427,6 +437,9 @@ export class MdPagesViewerElement extends HTMLElement {
   // shown), and the pages answered while the element is there (id -> yes).
   #feedbackPage = null;
   #feedbackAnswers = new Map();
+  // Whether the body shown has the PDF and Markdown buttons (a page's body,
+  // not a child index or a status); each is shown unless the host turned it off.
+  #toolsShown = false;
   // Events for the host (spec 5.11): the id of the page last told of (null:
   // none yet), and for the search, the number of results of the words in
   // the box, the timer that waits for them to settle, and the words last told of.
@@ -603,6 +616,10 @@ export class MdPagesViewerElement extends HTMLElement {
   set texts(value) { this.#setOption('texts', value); }
   get feedback() { return this.#options.feedback; }
   set feedback(value) { this.#setOption('feedback', value); }
+  get printButton() { return this.#options.printButton; }
+  set printButton(value) { this.#setOption('printButton', value); }
+  get markdownButton() { return this.#options.markdownButton; }
+  set markdownButton(value) { this.#setOption('markdownButton', value); }
   get styles() { return this.#options.styles; }
   set styles(value) {
     // Only the look changes, so it applies at once without drawing again.
@@ -733,6 +750,8 @@ export class MdPagesViewerElement extends HTMLElement {
     const { pages } = this.#options;
     // The words change at once, whatever else is going on.
     if (changed.has('locale') || changed.has('texts')) this.#applyTexts();
+    // The buttons too: they are on the body shown, whatever is on its way.
+    if (changed.has('printButton') || changed.has('markdownButton')) this.#renderTools();
 
     if (pages === undefined || pages === null) {
       this.#reset();
@@ -1186,8 +1205,8 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#addHeadingLinks();
     this.#addUpdated(page);
     this.#renderRelated(page, options);
-    this.#ui.printButton.hidden = false;
-    this.#ui.markdownButton.hidden = false;
+    this.#toolsShown = true;
+    this.#renderTools();
     // Not for a page with nothing in its body.
     this.#feedbackPage = markdown.trim() === '' ? null : page;
     this.#renderFeedback();
@@ -1379,8 +1398,8 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#ui.related.hidden = true;
     this.#feedbackPage = null;
     this.#ui.feedback.hidden = true;
-    this.#ui.printButton.hidden = true;
-    this.#ui.markdownButton.hidden = true;
+    this.#toolsShown = false;
+    this.#renderTools();
     this.#ui.bodyStatus.hidden = true;
     this.#ui.content.hidden = false;
     this.#ui.content.replaceChildren(fragment);
@@ -1625,6 +1644,19 @@ export class MdPagesViewerElement extends HTMLElement {
   }
 
   // ---- printing and the Markdown of a page (spec 5.4, 6) ----
+
+  /**
+   * The PDF and Markdown buttons, with a page's body: each unless the host
+   * turned it off (the option false, or the attribute "false").
+   */
+  #renderTools() {
+    const on = (key) => {
+      const value = this.#options[key];
+      return value !== false && value !== 'false';
+    };
+    this.#ui.printButton.hidden = !(this.#toolsShown && on('printButton'));
+    this.#ui.markdownButton.hidden = !(this.#toolsShown && on('markdownButton'));
+  }
 
   /** The page whose body is shown, or undefined. */
   #shownPage() {
@@ -2628,8 +2660,8 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#ui.related.hidden = true;
     this.#feedbackPage = null;
     this.#ui.feedback.hidden = true;
-    this.#ui.printButton.hidden = true;
-    this.#ui.markdownButton.hidden = true;
+    this.#toolsShown = false;
+    this.#renderTools();
     this.#markChildIndex(false);
     this.#renderPager(null);
     this.#updateToolbar();

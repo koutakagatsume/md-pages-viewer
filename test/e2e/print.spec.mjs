@@ -114,6 +114,74 @@ test('[表示/印刷] ツールバーの右の PDF・Markdown のボタンは、
   await expect(part(viewer, 'markdown-button')).toHaveAttribute('title', 'MD');
 });
 
+/** ツールバーに出ている部品の part 名（左から） */
+const toolbarParts = (viewer) =>
+  viewer.evaluate((el) => [...el.shadowRoot.querySelector('.mpv-toolbar').children].filter((n) => !n.hidden).map((n) => n.getAttribute('part')));
+
+test('[表示/印刷] printButton・markdownButton に false を指定すると、そのボタンを出さない。後から変えてもすぐ変わり、ほかのページ・子ページ一覧から戻っても指定のまま。属性でも指定できる（"false" で出さず、値なし・"true"・外すと出す）', async ({ page }) => {
+  await page.goto(BLANK);
+  const viewer = await mount(page, { options: { pages: PAGES, currentId: 'a', urlParam: false, printButton: false } });
+  await expect(content(viewer).locator('h1')).toHaveText('A');
+  await expect(part(viewer, 'print-button')).toBeHidden();
+  await expect(part(viewer, 'markdown-button')).toBeVisible();
+  expect(await toolbarParts(viewer)).toEqual(['sidebar-toggle', 'breadcrumb', 'search', 'markdown-button', 'toc-toggle']);
+
+  await viewer.evaluate((el) => (el.markdownButton = false));
+  await expect(part(viewer, 'markdown-button')).toBeHidden();
+  expect(await toolbarParts(viewer)).toEqual(['sidebar-toggle', 'breadcrumb', 'search', 'toc-toggle']);
+  expect(await viewer.evaluate((el) => [el.printButton, el.markdownButton])).toEqual([false, false]);
+
+  // ほかのページ（src のページ）・子ページ一覧から戻っても出さない
+  for (const id of ['b', 'cat', 'a']) {
+    await viewer.evaluate((el, id) => (el.currentId = id), id);
+    await expect(viewer.locator('.mpv-tree a[aria-current="page"]')).toHaveAttribute('data-mpv-nav', id);
+    if (id === 'b') await expect(content(viewer)).toContainText('Bの本文です。');
+    await expect(part(viewer, 'print-button'), id).toBeHidden();
+    await expect(part(viewer, 'markdown-button'), id).toBeHidden();
+  }
+
+  // true や、指定を外す（undefined）と出す
+  await viewer.evaluate((el) => {
+    el.printButton = true;
+    el.markdownButton = undefined;
+  });
+  await expect(part(viewer, 'print-button')).toBeVisible();
+  await expect(part(viewer, 'markdown-button')).toBeVisible();
+
+  // 属性
+  for (const [name, value, visible] of [
+    ['print-button', 'false', false],
+    ['print-button', '', true],
+    ['print-button', 'true', true],
+    ['markdown-button', 'false', false],
+  ]) {
+    await viewer.evaluate((el, [name, value]) => el.setAttribute(name, value), [name, value]);
+    if (visible) await expect(part(viewer, name), `${name}="${value}"`).toBeVisible();
+    else await expect(part(viewer, name), `${name}="${value}"`).toBeHidden();
+  }
+  await viewer.evaluate((el) => el.removeAttribute('markdown-button'));
+  await expect(part(viewer, 'markdown-button')).toBeVisible();
+});
+
+test('[表示/印刷] タグに最初から print-button="false"・markdown-button="false" を書くと、最初の表示からボタンを出さない', async ({ page }) => {
+  await page.goto(BLANK);
+  const viewer = await mount(page, { attributes: { 'print-button': 'false', 'markdown-button': 'false' }, options: { pages: PAGES, currentId: 'a', urlParam: false } });
+  await expect(content(viewer).locator('h1')).toHaveText('A');
+  expect(await toolbarParts(viewer)).toEqual(['sidebar-toggle', 'breadcrumb', 'search', 'toc-toggle']);
+  expect(await viewer.evaluate((el) => [el.printButton, el.markdownButton])).toEqual(['false', 'false']);
+});
+
+test('[表示/印刷] new MdPagesViewer のオプションでも printButton・markdownButton を指定できる', async ({ page }) => {
+  await page.goto(BLANK);
+  await page.evaluate((pages) => {
+    document.body.insertAdjacentHTML('beforeend', '<div id="target"></div>');
+    new window.MdPagesViewer('#target', { pages, currentId: 'a', urlParam: false, printButton: false, markdownButton: false });
+  }, PAGES);
+  const viewer = page.locator('#target md-pages-viewer');
+  await expect(content(viewer).locator('h1')).toHaveText('A');
+  expect(await toolbarParts(viewer)).toEqual(['sidebar-toggle', 'breadcrumb', 'search', 'toc-toggle']);
+});
+
 test('[表示/印刷] Markdown のボタンで、そのページの Markdown（md も src も）を「ページ名.md」でダウンロードする。ファイル名に使えない文字は _ にする', async ({ page }, testInfo) => {
   await page.goto(BLANK);
   const viewer = await mount(page, { options: { pages: PAGES, currentId: 'a', urlParam: false } });
