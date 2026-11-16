@@ -429,3 +429,50 @@ test('[表示/高さ] 読んでいる途中で組み込み先が高さを付け�
   await viewer.evaluate((el) => (el.style.height = '400px'));
   await expect.poll(() => near('fixed')).toBe(true);
 });
+
+// ---- a host scroller that only scrolls once the body is in ----
+
+test('[表示/スクロールの基準] 本文が入ってから初めてスクロールする組み込み先の枠（中でスクロールする main。外の画面もスクロールする）で、#見出し 付きで開くと、ツールバーは枠の上端に残り、目次はその見出しを強調する', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  // 開いてからの各コマで、ツールバーが枠の上端からどれだけずれたか（枠がスクロールしている間）。一瞬でもずれないこと
+  await page.addInitScript(() => {
+    window.__toolbarShift = 0;
+    const t0 = performance.now();
+    const frame = () => {
+      const el = document.querySelector('md-pages-viewer');
+      const main = document.getElementById('app-main');
+      const bar = el?.shadowRoot?.querySelector('.mpv-toolbar');
+      if (main && bar && main.scrollTop > 0) {
+        window.__toolbarShift = Math.max(window.__toolbarShift, Math.abs(bar.getBoundingClientRect().top - main.getBoundingClientRect().top));
+      }
+      if (performance.now() - t0 < 1500) requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  });
+  await page.goto(`${BLANK}?page=a#${encodeURIComponent('章三')}`);
+  // 上に見出しの帯、下に足の帯：外の画面もスクロールし、見出しへ移るときに外の画面も動く
+  await page.addStyleTag({ content: 'body{margin:0} #top{height:120px;background:#111} #app-main{height:600px;overflow:auto} #foot{height:900px;background:#eee}' });
+  await page.evaluate((pages) => {
+    document.body.insertAdjacentHTML('beforeend', '<div id="top"></div><main id="app-main"><div id="card"></div></main><div id="foot"></div>');
+    const el = document.createElement('md-pages-viewer');
+    el.pages = pages;
+    document.getElementById('card').append(el);
+  }, HEADER_PAGES);
+  const viewer = page.locator('md-pages-viewer');
+  await expect(content(viewer).locator('h1')).toHaveText('A');
+  // 移った後、手で動かす作りが外れるのを待つ
+  await wait(800);
+  const state = await viewer.evaluate((el) => {
+    const s = el.shadowRoot;
+    const main = document.getElementById('app-main');
+    const h = [...s.querySelectorAll('.mpv-content h2')].find((n) => n.textContent === '章三');
+    return {
+      mainScrolled: main.scrollTop > 0,
+      toolbarAtTop: Math.round(s.querySelector('.mpv-toolbar').getBoundingClientRect().top - main.getBoundingClientRect().top),
+      headingBelowToolbar: Math.round(h.getBoundingClientRect().top - s.querySelector('.mpv-toolbar').getBoundingClientRect().bottom),
+      current: s.querySelector('.mpv-toc [aria-current="location"]')?.textContent ?? null,
+    };
+  });
+  expect(state).toEqual({ mainScrolled: true, toolbarAtTop: 0, headingBelowToolbar: 8, current: '章三' });
+  expect(await page.evaluate(() => Math.round(window.__toolbarShift))).toBe(0);
+});

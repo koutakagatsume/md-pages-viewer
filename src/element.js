@@ -1475,6 +1475,10 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#ui.bodyStatus.hidden = true;
     this.#ui.content.hidden = false;
     this.#ui.content.replaceChildren(fragment);
+    // The host's scroller may only scroll now that the body is in (it was
+    // too short before): what the toolbar and the columns stay in view by is
+    // decided again, before the body is scrolled (spec 6).
+    this.#updateFollow();
 
     // Heading ids come after sanitizing (spec 5.4).
     const taken = new Set([...this.shadowRoot.querySelectorAll('[id]')].map((el) => el.id));
@@ -2237,6 +2241,8 @@ export class MdPagesViewerElement extends HTMLElement {
     const base = scrollBase(this);
     const needed = this.#ui.frame.dataset.height === 'auto' && scrollContainer(this) !== base;
     const target = needed ? (base ?? window) : null;
+    // Moved by hand or not, or against another scroller: the toolbar may move.
+    const moved = target !== this.#followTarget || (target !== null && base !== this.#followBase);
     if (target !== this.#followTarget) {
       this.#stopFollowing();
       if (target) target.addEventListener('scroll', this.#onFollowScroll, { passive: true });
@@ -2246,6 +2252,8 @@ export class MdPagesViewerElement extends HTMLElement {
     }
     this.#followBase = base;
     this.#placeSideColumns();
+    // The toolbar may be somewhere else now: the heading being read is found again.
+    if (moved) this.#updateTocCurrent();
   }
 
   #stopFollowing() {
