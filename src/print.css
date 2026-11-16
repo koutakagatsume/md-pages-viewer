@@ -22,6 +22,7 @@
 .mpv-search-box,
 .mpv-tool,
 .mpv-heading-link,
+.mpv-code-copy,
 .mpv-zoom {
   display: none !important;
 }

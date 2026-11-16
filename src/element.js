@@ -11,7 +11,7 @@ import { DEFAULT_LOCALE, findLocale, resolveTexts } from './texts.js';
 export const TAG = 'md-pages-viewer';
 
 // Every option: a property of the element, and of `new MdPagesViewer` (viewer.js).
-export const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts', 'feedback', 'printButton', 'markdownButton', 'searchMark'];
+export const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts', 'feedback', 'printButton', 'markdownButton', 'searchMark', 'codeCopyButton'];
 const ATTRIBUTES = {
   pages: 'pages',
   'current-id': 'currentId',
@@ -22,6 +22,7 @@ const ATTRIBUTES = {
   'print-button': 'printButton',
   'markdown-button': 'markdownButton',
   'search-mark': 'searchMark',
+  'code-copy-button': 'codeCopyButton',
 };
 
 // How the words of a chosen search result are marked in the body (searchMark, spec 5.4).
@@ -101,6 +102,8 @@ const ICONS = {
   // The bar of the words searched for ("nav"): to the previous and the next mark.
   previous: () => icon(['path', { d: 'M6 15l6-6 6 6' }]),
   next: () => icon(['path', { d: 'M6 9l6 6 6-6' }]),
+  // The button that copies the code of a code block.
+  copy: () => icon(['rect', { x: '9', y: '9', width: '11', height: '11', rx: '2' }], ['path', { d: 'M5 15V6a2 2 0 0 1 2-2h8' }]),
   // The button that copies a link to a heading, and what it shows once copied.
   link: () => {
     const svg = icon(['path', { d: 'M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.5' }], ['path', { d: 'M14 11a5 5 0 0 0-7.07 0l-2.83 2.83a5 5 0 0 0 7.07 7.07l1.33-1.33' }]);
@@ -404,7 +407,7 @@ export class MdPagesViewerElement extends HTMLElement {
     return Object.keys(ATTRIBUTES);
   }
 
-  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined, feedback: undefined, printButton: undefined, markdownButton: undefined, searchMark: undefined };
+  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined, feedback: undefined, printButton: undefined, markdownButton: undefined, searchMark: undefined, codeCopyButton: undefined };
   // The words on our parts (spec 5.10): made from locale and texts when first
   // needed, and again after either changes.
   #words = null;
@@ -686,6 +689,8 @@ export class MdPagesViewerElement extends HTMLElement {
   set markdownButton(value) { this.#setOption('markdownButton', value); }
   get searchMark() { return this.#options.searchMark; }
   set searchMark(value) { this.#setOption('searchMark', value); }
+  get codeCopyButton() { return this.#options.codeCopyButton; }
+  set codeCopyButton(value) { this.#setOption('codeCopyButton', value); }
   get styles() { return this.#options.styles; }
   set styles(value) {
     // Only the look changes, so it applies at once without drawing again.
@@ -819,6 +824,7 @@ export class MdPagesViewerElement extends HTMLElement {
     if (changed.has('locale') || changed.has('texts')) this.#applyTexts();
     // The buttons too: they are on the body shown, whatever is on its way.
     if (changed.has('printButton') || changed.has('markdownButton')) this.#renderTools();
+    if (changed.has('codeCopyButton')) this.#renderCodeCopy();
     if (changed.has('searchMark')) this.#onSearchMarkChanged();
 
     if (pages === undefined || pages === null) {
@@ -1274,6 +1280,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#putBody(fragment, how);
     this.#watchZoomable();
     this.#addHeadingLinks();
+    this.#addCodeCopy();
     this.#addUpdated(page);
     this.#renderRelated(page, options);
     this.#toolsShown = true;
@@ -1728,12 +1735,14 @@ export class MdPagesViewerElement extends HTMLElement {
    * turned it off (the option false, or the attribute "false").
    */
   #renderTools() {
-    const on = (key) => {
-      const value = this.#options[key];
-      return value !== false && value !== 'false';
-    };
-    this.#ui.printButton.hidden = !(this.#toolsShown && on('printButton'));
-    this.#ui.markdownButton.hidden = !(this.#toolsShown && on('markdownButton'));
+    this.#ui.printButton.hidden = !(this.#toolsShown && this.#shownUnlessOff('printButton'));
+    this.#ui.markdownButton.hidden = !(this.#toolsShown && this.#shownUnlessOff('markdownButton'));
+  }
+
+  /** A button the host can turn off: shown unless the option is false or the attribute "false". */
+  #shownUnlessOff(key) {
+    const value = this.#options[key];
+    return value !== false && value !== 'false';
   }
 
   /** The page whose body is shown, or undefined. */
@@ -1971,15 +1980,16 @@ export class MdPagesViewerElement extends HTMLElement {
   }
 
   /**
-   * After a copy: the button shows a check (or its link again, if the copy
-   * failed) with a short note beside it, for a moment, and screen readers
-   * are told the same.
+   * After a copy: the button shows a check (or its own icon again, if the
+   * copy failed) with a short note beside it, for a moment, and screen
+   * readers are told the same. `done`: the words of the note; `icon`: the
+   * button's own icon; `tip`: the part name of the note.
    */
-  #showCopied(button, ok) {
+  #showCopied(button, ok, { done = 'linkCopied', icon: ownIcon = ICONS.link, tip: tipPart = 'heading-link-tip' } = {}) {
     clearTimeout(this.#copyTimers.get(button));
-    const message = this.#text(ok ? 'linkCopied' : 'copyFailed');
-    const tip = h('span', { class: 'mpv-heading-link-tip', part: 'heading-link-tip', 'aria-hidden': 'true' }, message);
-    button.replaceChildren(ok ? ICONS.copied() : ICONS.link(), tip);
+    const message = this.#text(ok ? done : 'copyFailed');
+    const tip = h('span', { class: `mpv-${tipPart}`, part: tipPart, 'aria-hidden': 'true' }, message);
+    button.replaceChildren(ok ? ICONS.copied() : ownIcon(), tip);
     button.setAttribute('data-mpv-copied', ok ? 'done' : 'failed');
     // Kept inside the body: to the left of the button where the right has no room.
     if (tip.getBoundingClientRect().right > this.#ui.content.getBoundingClientRect().right) tip.setAttribute('data-mpv-side', 'left');
@@ -1989,11 +1999,49 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#copyTimers.set(
       button,
       setTimeout(() => {
-        button.replaceChildren(ICONS.link());
+        button.replaceChildren(ownIcon());
         button.removeAttribute('data-mpv-copied');
         if (live.textContent === message) live.textContent = '';
       }, COPIED_TIME),
     );
+  }
+
+  // ---- copying the code of a code block (spec 5.4) ----
+
+  /**
+   * A button at the top right of each code block of the body that copies its
+   * code. The block is put in a frame of ours, so the button stays in its
+   * corner while a long line is scrolled sideways. Shown unless the host
+   * turned it off (codeCopyButton, #renderCodeCopy).
+   */
+  #addCodeCopy() {
+    const label = this.#text('copyCode');
+    const hidden = !this.#shownUnlessOff('codeCopyButton');
+    for (const pre of this.#ui.content.querySelectorAll('pre')) {
+      const frame = h('div', { class: 'mpv-code' });
+      pre.replaceWith(frame);
+      frame.append(pre, h('button', { type: 'button', class: 'mpv-code-copy', part: 'code-copy-button', 'aria-label': label, title: label, hidden }, ICONS.copy()));
+    }
+  }
+
+  /** The buttons follow the option at once, without drawing the body again. */
+  #renderCodeCopy() {
+    const hidden = !this.#shownUnlessOff('codeCopyButton');
+    for (const button of this.#ui.content.querySelectorAll('.mpv-code-copy')) button.hidden = hidden;
+  }
+
+  async #copyCode(button) {
+    const pre = button.parentElement && button.parentElement.querySelector(':scope > pre');
+    const shown = this.#displayed;
+    if (!pre || !shown || shown.kind !== 'page') return;
+    // The code as written: the last line break of the block is not part of it.
+    const block = pre.querySelector(':scope > code');
+    const code = (block ?? pre).textContent.replace(/\n$/, '');
+    const language = (block && block.className.match(/(?:^|\s)language-(\S+)/)?.[1]) ?? null;
+    // The host may copy it its own way instead (spec 5.11).
+    if (!this.#emit('mpv-copycode', { id: shown.id, language, code }, { cancelable: true })) return;
+    const ok = await this.#copyText(code);
+    if (this.#ui.content.contains(button)) this.#showCopied(button, ok, { done: 'codeCopied', icon: ICONS.copy, tip: 'code-copy-tip' });
   }
 
   // ---- scrolling (spec 5.5) ----
@@ -2434,6 +2482,12 @@ export class MdPagesViewerElement extends HTMLElement {
       return;
     }
     // Ours only: the body cannot carry class names that start with "mpv-".
+    const codeCopy = inBody ? target.closest('.mpv-code-copy') : null;
+    if (codeCopy) {
+      event.preventDefault();
+      this.#copyCode(codeCopy);
+      return;
+    }
     const copy = inBody ? target.closest('.mpv-heading-link') : null;
     if (copy) {
       // A heading inside a link: the click copies, it does not follow the link.

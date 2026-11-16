@@ -967,8 +967,8 @@
 }
 
 /* "Copied" beside the button: to its right, or to its left where the body
-   has no room on the right. */
-.mpv-content .mpv-heading-link-tip {
+   has no room on the right (always, for the code blocks' button). */
+.mpv-content :is(.mpv-heading-link-tip, .mpv-code-copy-tip) {
   position: absolute;
   top: 50%;
   left: calc(100% + 6px);
@@ -985,9 +985,77 @@
   pointer-events: none;
 }
 
-.mpv-content .mpv-heading-link-tip[data-mpv-side='left'] {
+.mpv-content :is(.mpv-heading-link-tip, .mpv-code-copy-tip)[data-mpv-side='left'] {
   left: auto;
   right: calc(100% + 6px);
+}
+
+/* Code blocks of the body (spec 5.4): in a frame of ours, with a button at
+   the top right that copies the code. The frame takes the block's margin.
+   The button is seen while the block is pointed at, while it has the
+   keyboard focus, and for a moment after a copy; faint all the time where
+   nothing can point (touch screens), like the links to headings. */
+.mpv-content .mpv-code {
+  position: relative;
+  margin: 0 0 1em;
+}
+
+.mpv-content .mpv-code > pre {
+  margin: 0;
+}
+
+.mpv-content .mpv-code-copy {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--_border);
+  border-radius: 6px;
+  background: var(--mpv-color-bg, Canvas);
+  color: var(--_muted);
+  font: inherit;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s, color 0.15s, border-color 0.15s;
+}
+
+.mpv-content .mpv-code-copy svg {
+  width: 16px;
+  height: 16px;
+}
+
+.mpv-content .mpv-code:hover > .mpv-code-copy,
+.mpv-content .mpv-code-copy:focus-visible,
+.mpv-content .mpv-code-copy[data-mpv-copied] {
+  opacity: 1;
+}
+
+.mpv-content .mpv-code-copy:hover,
+.mpv-content .mpv-code-copy:focus-visible,
+.mpv-content .mpv-code-copy[data-mpv-copied] {
+  color: var(--_accent);
+  border-color: var(--_accent);
+}
+
+.mpv-content .mpv-code-copy:focus-visible {
+  outline: 2px solid var(--_accent);
+  outline-offset: 1px;
+}
+
+@media (hover: none) {
+  .mpv-content .mpv-code-copy {
+    opacity: 0.6;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mpv-content .mpv-code-copy {
+    transition: none;
+  }
 }
 
 /* When the page was last updated (spec 5.4): small and faint, on the right
