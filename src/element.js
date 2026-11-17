@@ -11,7 +11,7 @@ import { DEFAULT_LOCALE, findLocale, resolveTexts } from './texts.js';
 export const TAG = 'md-pages-viewer';
 
 // Every option: a property of the element, and of `new MdPagesViewer` (viewer.js).
-export const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts', 'feedback', 'printButton', 'markdownButton', 'searchMark', 'codeCopyButton'];
+export const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts', 'feedback', 'printButton', 'markdownButton', 'searchMark', 'codeCopyButton', 'searchSrc'];
 const ATTRIBUTES = {
   pages: 'pages',
   'current-id': 'currentId',
@@ -23,6 +23,7 @@ const ATTRIBUTES = {
   'markdown-button': 'markdownButton',
   'search-mark': 'searchMark',
   'code-copy-button': 'codeCopyButton',
+  'search-src': 'searchSrc',
 };
 
 // How the words of a chosen search result are marked in the body (searchMark, spec 5.4).
@@ -42,6 +43,8 @@ const SEARCH_READ_SLICE_MS = 12;
 const SEARCH_READ_ON_INPUT_MS = 50;
 // and the results found so far are shown again at most this often.
 const SEARCH_REFRESH_MS = 250;
+// Bodies given as src are fetched for the search this many at a time.
+const SEARCH_FETCH_PARALLEL = 4;
 
 // The table of contents keeps the heading it scrolls to marked (spec 5.4)
 // until the scrolling has stopped this long (ms), or until it has not begun
@@ -407,7 +410,7 @@ export class MdPagesViewerElement extends HTMLElement {
     return Object.keys(ATTRIBUTES);
   }
 
-  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined, feedback: undefined, printButton: undefined, markdownButton: undefined, searchMark: undefined, codeCopyButton: undefined };
+  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined, feedback: undefined, printButton: undefined, markdownButton: undefined, searchMark: undefined, codeCopyButton: undefined, searchSrc: undefined };
   // The words on our parts (spec 5.10): made from locale and texts when first
   // needed, and again after either changes.
   #words = null;
@@ -691,6 +694,8 @@ export class MdPagesViewerElement extends HTMLElement {
   set searchMark(value) { this.#setOption('searchMark', value); }
   get codeCopyButton() { return this.#options.codeCopyButton; }
   set codeCopyButton(value) { this.#setOption('codeCopyButton', value); }
+  get searchSrc() { return this.#options.searchSrc; }
+  set searchSrc(value) { this.#setOption('searchSrc', value); }
   get styles() { return this.#options.styles; }
   set styles(value) {
     // Only the look changes, so it applies at once without drawing again.
@@ -826,6 +831,7 @@ export class MdPagesViewerElement extends HTMLElement {
     if (changed.has('printButton') || changed.has('markdownButton')) this.#renderTools();
     if (changed.has('codeCopyButton')) this.#renderCodeCopy();
     if (changed.has('searchMark')) this.#onSearchMarkChanged();
+    if (changed.has('searchSrc')) this.#onSearchSrcChanged();
 
     if (pages === undefined || pages === null) {
       this.#reset();
@@ -1204,8 +1210,12 @@ export class MdPagesViewerElement extends HTMLElement {
       }
     }
     // Keep the body even if the user has moved on, as long as it belongs to
-    // the current list (spec 5.2); only the rendering is skipped.
-    if (generation === this.#cacheGeneration && !this.#listPending) this.#bodyCache.set(page.id, text);
+    // the current list (spec 5.2); only the rendering is skipped. The search
+    // reads it too (one its own fetch could not get).
+    if (generation === this.#cacheGeneration && !this.#listPending) {
+      this.#bodyCache.set(page.id, text);
+      this.#searchBodyArrived(page.id);
+    }
     if (nav !== this.#navToken) return;
     this.#renderBody(page, text, how);
   }
@@ -1423,22 +1433,23 @@ export class MdPagesViewerElement extends HTMLElement {
   }
 
   /**
-   * The headings (h2, h3) of a page whose body is given as `md`, with the
-   * ids they get when that page is shown, and the text under each. Used by
-   * the child index and the search. Pages given as `src` are not fetched for
-   * this (spec 5.2). Images and links are left alone: nothing is loaded and
-   * imageResolver is not called. Kept per page until the list is loaded again.
+   * The headings (h2, h3) of a page's body (#markdownOf), with the ids they
+   * get when that page is shown, and the text under each. Used by the child
+   * index (`md` pages only) and the search. Images and links are left alone:
+   * nothing is loaded and imageResolver is not called. Kept per page until
+   * the list is loaded again; a page whose body is not here has none (not kept).
    * @returns {{lead: string, sections: {id: string, level: string, heading: string, text: string}[]}}
    */
   #outlineOf(page) {
     const empty = { lead: '', sections: [] };
-    if (page.md === null) return empty;
+    const markdown = this.#markdownOf(page);
+    if (markdown === null) return empty;
     const cached = this.#outlines.get(page);
     if (cached) return cached;
     let fragment;
     try {
       fragment = renderMarkdown(
-        page.md,
+        markdown,
         {
           image: () => '',
           link: () => ({ type: 'default' }),
@@ -1469,6 +1480,16 @@ export class MdPagesViewerElement extends HTMLElement {
     }
     this.#outlines.set(page, outline);
     return outline;
+  }
+
+  /**
+   * The Markdown of a page's body: its `md`, or the body of its `src` once
+   * fetched (opened, or fetched for the search; spec 5.2). Null otherwise.
+   */
+  #markdownOf(page) {
+    if (page.md !== null) return page.md;
+    if (page.src !== null && this.#bodyCache.has(page.id)) return this.#bodyCache.get(page.id);
+    return null;
   }
 
   #putBody(fragment, how) {
@@ -2598,11 +2619,12 @@ export class MdPagesViewerElement extends HTMLElement {
 
   /**
    * Searches page titles, descriptions, headings and body text, and lists
-   * the matches under the search box in the toolbar. Bodies given as `src`
-   * are not fetched for this; only their titles and descriptions count.
-   * Titles and descriptions of all pages count at once; headings and body
-   * text count once that page has been read (#prepareSearch). Until all are
-   * read, the results so far are shown with a "searching" note.
+   * the matches under the search box in the toolbar. Titles and descriptions
+   * of all pages count at once; headings and body text count once that page
+   * has been read (#prepareSearch), a body given as `src` once it has been
+   * fetched too (not with searchSrc false: then only its title and
+   * description count). Until all are read, the results so far are shown
+   * with a "searching" note.
    * `show` is false when the results are only made again (a new list, more
    * pages read). `readMs`: how long to read page bodies first, if any are left.
    */
@@ -2688,7 +2710,9 @@ export class MdPagesViewerElement extends HTMLElement {
   /**
    * The folded text a page is matched against: its title and description
    * at once, and its headings and body text once read (`read` reads them
-   * now; a page without `md` has none). Kept per page; a new list has new
+   * now). A body given as `src` is read once it is here (#markdownOf) and
+   * searchSrc is not false; until then the page has no body text. A page
+   * with neither `md` nor `src` has none. Kept per page; a new list has new
    * page objects.
    * @returns {{head: string, description: string, body: null | {lead: string, sections: {heading: string, all: string}[]}}}
    */
@@ -2698,7 +2722,8 @@ export class MdPagesViewerElement extends HTMLElement {
       text = { head: foldText(`${page.title} ${page.description ?? ''}`), description: page.description ? foldText(page.description) : '', body: null };
       this.#searchTexts.set(page, text);
     }
-    if (text.body === null && (read || page.md === null)) {
+    const ready = page.md !== null ? read : page.src === null || (read && this.#searchesSrc() && this.#bodyCache.has(page.id));
+    if (text.body === null && ready) {
       const outline = this.#outlineOf(page);
       text.body = {
         lead: foldText(outline.lead),
@@ -2711,7 +2736,8 @@ export class MdPagesViewerElement extends HTMLElement {
   /**
    * Starts reading the page bodies of the current list for the search, or
    * goes on with it: a little at a time in sidebar order, so the screen is
-   * never held up (spec 5.4). A new list starts over.
+   * never held up (spec 5.4). Bodies given as `src` are fetched first
+   * (#fetchForSearch), unless searchSrc is false. A new list starts over.
    */
   #prepareSearch() {
     const model = this.#model;
@@ -2719,38 +2745,136 @@ export class MdPagesViewerElement extends HTMLElement {
     let prep = this.#searchPrep;
     if (!prep || prep.model !== model) {
       if (prep) clearTimeout(prep.timer);
-      prep = { model, order: this.#pageOrder(), next: 0, timer: 0, shownAt: 0 };
+      const order = this.#pageOrder();
+      prep = {
+        model,
+        order, // pages to read, in sidebar order; a body that arrives later is added at the end
+        next: 0, // the next of order to read
+        timer: 0,
+        shownAt: 0,
+        // The pages whose body is to be fetched, in sidebar order.
+        fetchOrder: this.#searchesSrc() ? order.filter((id) => model.get(id).md === null && model.get(id).src !== null) : [],
+        fetchNext: 0, // the next of fetchOrder to fetch
+        fetching: 0, // fetches not yet settled
+        failed: [], // what could not be fetched, told once all have settled
+        refresh: false, // a fetch settled while the element was taken away: show the results again
+      };
       this.#searchPrep = prep;
     }
-    if (prep.next < prep.order.length && !prep.timer && this.isConnected) prep.timer = setTimeout(this.#onSearchReadSlice, 0);
+    if (!this.isConnected) return;
+    this.#fetchForSearch(prep);
+    if (prep.next < prep.order.length || prep.refresh) {
+      prep.refresh = false;
+      this.#scheduleSearchRead(prep);
+    }
   }
 
-  /** Whether page bodies of the current list are still to be read for the search. */
+  /** Whether searchSrc lets the search fetch and read bodies given as `src` (spec 5.4). */
+  #searchesSrc() {
+    return this.#shownUnlessOff('searchSrc');
+  }
+
+  /**
+   * Fetches the bodies given as `src` for the search (spec 5.4), a few at a
+   * time in sidebar order. Each is kept as if it had been opened (spec 5.2),
+   * so opening that page later needs no fetch, and is read for the search.
+   * One already here is not fetched again. One that cannot be fetched is
+   * searched by its title and description only; the console is told once.
+   */
+  #fetchForSearch(prep) {
+    while (prep.fetching < SEARCH_FETCH_PARALLEL && prep.fetchNext < prep.fetchOrder.length) {
+      const id = prep.fetchOrder[prep.fetchNext];
+      prep.fetchNext += 1;
+      const page = prep.model.get(id);
+      if (this.#bodyCache.has(id)) continue; // read with the rest (order)
+      const generation = this.#cacheGeneration;
+      prep.fetching += 1;
+      this.#fetchBody(page, generation)
+        .then(
+          (text) => {
+            if (generation === this.#cacheGeneration && !this.#listPending) this.#bodyCache.set(id, text);
+          },
+          (error) => {
+            prep.failed.push(`"${page.src}": ${error.message}`);
+          },
+        )
+        .then(() => {
+          prep.fetching -= 1;
+          // A new list (or none), or searchSrc changed: this reading is over.
+          if (prep !== this.#searchPrep || prep.model !== this.#model) return;
+          if (prep.fetching === 0 && prep.fetchNext >= prep.fetchOrder.length && prep.failed.length > 0) {
+            const more = prep.failed.length > 1 ? ` and ${prep.failed.length - 1} more` : '';
+            warn(`Could not load ${prep.failed[0]}${more} for the search; those pages are searched by their titles and descriptions only.`);
+            prep.failed = [];
+          }
+          this.#searchBodyArrived(id);
+          // Shows the results again, the "searching" note gone once all are
+          // in; when the element is put back, if it has been taken away.
+          if (!this.isConnected) {
+            prep.refresh = true;
+            return;
+          }
+          this.#fetchForSearch(prep);
+          this.#scheduleSearchRead(prep);
+        });
+    }
+  }
+
+  /**
+   * A body given as `src` is here (fetched for the search, or opened): it is
+   * read for the search with the rest (spec 5.4).
+   */
+  #searchBodyArrived(id) {
+    const prep = this.#searchPrep;
+    if (!prep || prep.model !== this.#model || !this.#bodyCache.has(id) || !this.#searchesSrc()) return;
+    prep.order.push(id);
+    if (this.isConnected) this.#scheduleSearchRead(prep);
+  }
+
+  #scheduleSearchRead(prep) {
+    if (!prep.timer) prep.timer = setTimeout(this.#onSearchReadSlice, 0);
+  }
+
+  /**
+   * searchSrc has changed: what is searched changes, so the texts are made
+   * again from the start, the bodies fetched for the search (or not) from now on.
+   */
+  #onSearchSrcChanged() {
+    const prep = this.#searchPrep;
+    if (prep) clearTimeout(prep.timer);
+    this.#searchPrep = null;
+    this.#searchTexts = new WeakMap();
+    if (this.#searchQuery !== '') this.#runSearch({ show: !this.#ui.searchResults.hidden });
+    else if (prep) this.#prepareSearch();
+  }
+
+  /** Whether page bodies of the current list are still to be fetched or read for the search. */
   #searchReading() {
     const prep = this.#searchPrep;
-    return prep !== null && prep.model === this.#model && prep.next < prep.order.length;
+    return prep !== null && prep.model === this.#model && (prep.next < prep.order.length || prep.fetching > 0 || prep.fetchNext < prep.fetchOrder.length);
   }
 
   /** Reads page bodies for the search for about `ms` milliseconds. */
   #readForSearch(ms) {
-    if (!this.#searchReading()) return;
     const prep = this.#searchPrep;
+    if (!prep || prep.model !== this.#model) return;
     const until = performance.now() + ms;
-    do {
+    while (prep.next < prep.order.length) {
       const page = prep.model.get(prep.order[prep.next]);
       prep.next += 1;
       if (page) this.#searchTextOf(page, true);
-    } while (prep.next < prep.order.length && performance.now() < until);
+      if (performance.now() >= until) break;
+    }
   }
 
   #onSearchReadSlice = () => {
     const prep = this.#searchPrep;
     if (!prep) return;
     prep.timer = 0;
-    if (prep.model !== this.#model || !this.isConnected || !this.#searchReading()) return;
+    if (prep.model !== this.#model || !this.isConnected) return;
     this.#readForSearch(SEARCH_READ_SLICE_MS);
+    if (prep.next < prep.order.length) prep.timer = setTimeout(this.#onSearchReadSlice, 0);
     const done = !this.#searchReading();
-    if (!done) prep.timer = setTimeout(this.#onSearchReadSlice, 0);
     // The results so far are shown now and then, and in full at the end.
     if (this.#searchQuery !== '' && this.#searchModel === prep.model && (done || performance.now() - prep.shownAt >= SEARCH_REFRESH_MS)) {
       this.#runSearch({ show: !this.#ui.searchResults.hidden });

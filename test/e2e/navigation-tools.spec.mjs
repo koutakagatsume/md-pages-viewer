@@ -883,12 +883,13 @@ test('[表示/検索] ページ名・説明文・見出し・本文から探し�
   await input.fill('ログイン  設定');
   expect(await results(viewer)).toEqual([{ page: 'ガイド', heading: '設定', snippet: expect.stringContaining('ログイン後に設定します'), marks: expect.arrayContaining(['ログイン', '設定']) }]);
 
-  // 説明文とページ名。src のページは名前だけが対象で、取得しない
+  // 説明文とページ名。src のページは検索欄に入ったときに1回だけ取得し、取得できない（ここでは 404）ときは名前だけが対象
+  // （取得した本文から探すことは search-src.spec.mjs で確かめる）
   await input.fill('使い方');
   expect(await results(viewer)).toEqual([{ page: 'ガイド', heading: null, snippet: '使い方の説明', marks: ['使い方'] }]);
   await input.fill('リモート');
   expect(await results(viewer)).toEqual([{ page: 'リモート', heading: null, snippet: null, marks: ['リモート'] }]);
-  expect(requests.filter((u) => u.includes('remote.md'))).toEqual([]);
+  expect(requests.filter((u) => u.includes('remote.md'))).toHaveLength(1);
 
   // 結果にはページの位置（最上位から順の名前）が出て、同じ名前のページを区別できる
   await input.fill('ネスト');
