@@ -1502,6 +1502,114 @@
   border-top: 1px solid var(--_border);
 }
 
+/* The button back to the top (spec 5.4). It has room of its own at the end
+   of the body column, under the previous and next pages (taking the column's
+   bottom padding, so the column grows by 16px), where it rests at the end;
+   while the body goes by, the room sticks to the bottom of the view (or of
+   the column, with a height), so the button never covers those links once
+   scrolled to the end. Shown once the page has been scrolled down a little
+   (data-mpv-shown); its ring shows how far down the page has gone. */
+.mpv-top-wrap {
+  position: sticky;
+  bottom: 0;
+  z-index: 3;
+  height: 64px;
+  margin-bottom: calc(var(--_space) * -3);
+  pointer-events: none;
+}
+
+.mpv-top {
+  position: absolute;
+  right: 0;
+  bottom: 16px;
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: var(--mpv-color-bg, Canvas);
+  color: var(--_muted);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
+  font: inherit;
+  cursor: pointer;
+  pointer-events: auto;
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(8px);
+  transition: opacity 0.2s, transform 0.2s, visibility 0.2s, color 0.15s;
+}
+
+.mpv-top[data-mpv-shown] {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+}
+
+.mpv-top:hover,
+.mpv-top:focus-visible {
+  color: var(--_accent);
+}
+
+.mpv-top:focus-visible {
+  outline: 2px solid var(--_accent);
+  outline-offset: 3px;
+}
+
+.mpv-top > svg:not(.mpv-top-ring) {
+  grid-area: 1 / 1;
+}
+
+.mpv-top-ring {
+  position: absolute;
+  inset: -3px;
+  width: calc(100% + 6px);
+  height: calc(100% + 6px);
+  transform: rotate(-90deg);
+  pointer-events: none;
+}
+
+.mpv-top-ring-track,
+.mpv-top-ring-bar {
+  fill: none;
+  stroke-width: 2.5;
+}
+
+.mpv-top-ring-track {
+  stroke: var(--_border);
+}
+
+.mpv-top-ring-bar {
+  stroke: var(--_accent);
+  stroke-linecap: round;
+  stroke-dasharray: 100;
+  stroke-dashoffset: 100;
+}
+
+/* With a height the column scrolls itself, and sticky keeps clear of the
+   column's bottom padding: the room goes down to the column's bottom. */
+.mpv[data-height='fixed'] .mpv-top-wrap {
+  bottom: calc(var(--_space) * -3);
+}
+
+/* The narrow column's bottom padding is smaller. */
+@container (max-width: 767.98px) {
+  .mpv-top-wrap {
+    margin-bottom: calc(var(--_space) * -2);
+  }
+
+  .mpv[data-height='fixed'] .mpv-top-wrap {
+    bottom: calc(var(--_space) * -2);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mpv-top {
+    transition: none;
+  }
+}
+
 .mpv-pager-link {
   min-width: 0;
   display: flex;

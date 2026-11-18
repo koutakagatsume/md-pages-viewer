@@ -640,6 +640,8 @@ async function expectHostAnchorsIgnored(page, viewer) {
         // The table of contents follows the scroll (the heading being read and
         // the h3 entries shown, spec 5.4); that is not drawing the page again.
         if (r.type === 'attributes' && r.target.closest('.mpv-toc-list') && ['part', 'aria-current', 'hidden'].includes(r.attributeName)) continue;
+        // So does the button back to the top (shown or not, and its ring).
+        if (r.type === 'attributes' && r.target.closest('.mpv-top') && ['data-mpv-shown', 'style'].includes(r.attributeName)) continue;
         window.__shadowMutations.push(`${r.type}:${r.target.nodeName}.${r.target.className || ''}`);
       }
     }).observe(el.shadowRoot, { subtree: true, childList: true, attributes: true, attributeOldValue: true, characterData: true });

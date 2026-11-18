@@ -11,7 +11,7 @@ import { DEFAULT_LOCALE, findLocale, resolveTexts } from './texts.js';
 export const TAG = 'md-pages-viewer';
 
 // Every option: a property of the element, and of `new MdPagesViewer` (viewer.js).
-export const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts', 'feedback', 'printButton', 'markdownButton', 'searchMark', 'codeCopyButton', 'searchSrc'];
+export const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts', 'feedback', 'printButton', 'markdownButton', 'searchMark', 'codeCopyButton', 'searchSrc', 'backToTopButton'];
 const ATTRIBUTES = {
   pages: 'pages',
   'current-id': 'currentId',
@@ -24,6 +24,7 @@ const ATTRIBUTES = {
   'search-mark': 'searchMark',
   'code-copy-button': 'codeCopyButton',
   'search-src': 'searchSrc',
+  'back-to-top-button': 'backToTopButton',
 };
 
 // How the words of a chosen search result are marked in the body (searchMark, spec 5.4).
@@ -58,6 +59,9 @@ const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home
 // How long the heading reached from the table of contents stays marked when
 // the host has taken its animation away (as long as the animation, styles.css).
 const TARGET_MARK_TIME = 1500;
+// The button back to the top (spec 5.4) is shown once the page has been
+// scrolled down this much of the height of the view.
+const TOP_BUTTON_AFTER = 0.05;
 
 /** Creates an element. `hidden: true` sets the attribute; other props are attributes as given. */
 function h(tag, props, ...children) {
@@ -89,6 +93,22 @@ function icon(...shapes) {
   return svg;
 }
 
+/**
+ * The ring around the button back to the top (spec 5.4): a track, and over
+ * it a bar as long as how far down the page has gone (stroke-dashoffset,
+ * 100 to 0; the path counts as 100 long).
+ */
+function progressRing() {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  for (const [name, value] of Object.entries({ class: 'mpv-top-ring', viewBox: '0 0 44 44', 'aria-hidden': 'true', focusable: 'false' })) svg.setAttribute(name, value);
+  for (const kind of ['track', 'bar']) {
+    const circle = document.createElementNS(SVG_NS, 'circle');
+    for (const [name, value] of Object.entries({ class: `mpv-top-ring-${kind}`, cx: '22', cy: '22', r: '20', pathLength: '100' })) circle.setAttribute(name, value);
+    svg.append(circle);
+  }
+  return svg;
+}
+
 const PANEL = ['rect', { x: '3', y: '4', width: '18', height: '16', rx: '2' }];
 /** Panel icons: which side the column is on, and which way the arrow points (spec 6). */
 const ICONS = {
@@ -105,6 +125,12 @@ const ICONS = {
   // The bar of the words searched for ("nav"): to the previous and the next mark.
   previous: () => icon(['path', { d: 'M6 15l6-6 6 6' }]),
   next: () => icon(['path', { d: 'M6 9l6 6 6-6' }]),
+  // The button back to the top of the page.
+  top: () => {
+    const svg = icon(['path', { d: 'M12 19V5' }], ['path', { d: 'M5.5 11.5L12 5l6.5 6.5' }]);
+    svg.setAttribute('stroke-width', '2.2');
+    return svg;
+  },
   // The button that copies the code of a code block.
   copy: () => icon(['rect', { x: '9', y: '9', width: '11', height: '11', rx: '2' }], ['path', { d: 'M5 15V6a2 2 0 0 1 2-2h8' }]),
   // The button that copies a link to a heading, and what it shows once copied.
@@ -204,6 +230,9 @@ function buildParts() {
           // "Was this page helpful?" (spec 5.4), when the host asks for it.
           h('div', { class: 'mpv-feedback', part: 'feedback', role: 'group', hidden: true }),
           h('nav', { class: 'mpv-pager', part: 'pager', hidden: true }),
+          // The button back to the top (spec 5.4): with room of its own at the
+          // end of the column, kept at the bottom of the view while the body goes by.
+          h('div', { class: 'mpv-top-wrap' }, h('button', { type: 'button', class: 'mpv-top', part: 'back-to-top-button' }, progressRing(), ICONS.top())),
         ),
         h(
           'nav',
@@ -410,7 +439,7 @@ export class MdPagesViewerElement extends HTMLElement {
     return Object.keys(ATTRIBUTES);
   }
 
-  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined, feedback: undefined, printButton: undefined, markdownButton: undefined, searchMark: undefined, codeCopyButton: undefined, searchSrc: undefined };
+  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined, feedback: undefined, printButton: undefined, markdownButton: undefined, searchMark: undefined, codeCopyButton: undefined, searchSrc: undefined, backToTopButton: undefined };
   // The words on our parts (spec 5.10): made from locale and texts when first
   // needed, and again after either changes.
   #words = null;
@@ -519,6 +548,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#spyFrame = requestAnimationFrame(() => {
       this.#spyFrame = 0;
       this.#updateTocCurrent();
+      this.#updateTopButton();
       this.#place = this.#readingPlace();
     });
   };
@@ -593,6 +623,9 @@ export class MdPagesViewerElement extends HTMLElement {
       tree: $('.mpv-tree'),
       main: $('.mpv-main'),
       pager: $('.mpv-pager'),
+      topWrap: $('.mpv-top-wrap'),
+      topButton: $('.mpv-top'),
+      topRing: $('.mpv-top-ring-bar'),
       feedback: $('.mpv-feedback'),
       hitBar: $('.mpv-hit-bar'),
       breadcrumb: $('.mpv-breadcrumb'),
@@ -696,6 +729,8 @@ export class MdPagesViewerElement extends HTMLElement {
   set codeCopyButton(value) { this.#setOption('codeCopyButton', value); }
   get searchSrc() { return this.#options.searchSrc; }
   set searchSrc(value) { this.#setOption('searchSrc', value); }
+  get backToTopButton() { return this.#options.backToTopButton; }
+  set backToTopButton(value) { this.#setOption('backToTopButton', value); }
   get styles() { return this.#options.styles; }
   set styles(value) {
     // Only the look changes, so it applies at once without drawing again.
@@ -832,6 +867,7 @@ export class MdPagesViewerElement extends HTMLElement {
     if (changed.has('codeCopyButton')) this.#renderCodeCopy();
     if (changed.has('searchMark')) this.#onSearchMarkChanged();
     if (changed.has('searchSrc')) this.#onSearchSrcChanged();
+    if (changed.has('backToTopButton')) this.#updateTopButton();
 
     if (pages === undefined || pages === null) {
       this.#reset();
@@ -1057,7 +1093,7 @@ export class MdPagesViewerElement extends HTMLElement {
     }
     ui.viewToggle.textContent = this.#text(this.#childView === 'list' ? 'viewCard' : 'viewList');
     label(ui.zoom, 'aria-label', 'zoomed');
-    for (const [button, key] of [[ui.printButton, 'printPage'], [ui.markdownButton, 'downloadMarkdown']]) {
+    for (const [button, key] of [[ui.printButton, 'printPage'], [ui.markdownButton, 'downloadMarkdown'], [ui.topButton, 'backToTop']]) {
       label(button, 'aria-label', key);
       label(button, 'title', key);
     }
@@ -1518,6 +1554,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#setToc(toc);
     this.#scroll(how, true);
     this.#updateTocCurrent();
+    this.#updateTopButton();
   }
 
   // ---- enlarging body images (spec 5.4) ----
@@ -2189,9 +2226,17 @@ export class MdPagesViewerElement extends HTMLElement {
     if (heading.part.length === 0) heading.removeAttribute('part');
   }
 
-  #scrollToTop() {
+  /** smooth (the button back to the top, spec 5.4): gradually; with prefers-reduced-motion, at once. */
+  #scrollToTop({ smooth = false } = {}) {
+    const gradual = smooth && !matchMedia('(prefers-reduced-motion: reduce)').matches;
+    // Otherwise as the scroller is set to (the host's scroll-behavior).
+    const by = (scroller, delta) => {
+      if (gradual) scroller.scrollBy({ top: delta, behavior: 'smooth' });
+      else if (scroller === window) window.scrollBy(0, delta);
+      else scroller.scrollTop += delta;
+    };
     if (this.#ui.frame.dataset.height === 'fixed') {
-      this.#ui.main.scrollTop = 0;
+      by(this.#ui.main, -this.#ui.main.scrollTop);
       return;
     }
     // The top of the element just below the host's fixed header, if any.
@@ -2199,11 +2244,88 @@ export class MdPagesViewerElement extends HTMLElement {
     const top = this.getBoundingClientRect().top;
     const base = scrollBase(this);
     if (!base) {
-      if (top < offset) window.scrollBy(0, top - offset);
+      if (top < offset) by(window, top - offset);
       return;
     }
     const baseTop = base.getBoundingClientRect().top + base.clientTop + offset;
-    if (top < baseTop) base.scrollTop -= baseTop - top;
+    if (top < baseTop) by(base, top - baseTop);
+  }
+
+  // ---- the button back to the top (spec 5.4) ----
+
+  /**
+   * Shown once the page has been scrolled down a little (TOP_BUTTON_AFTER of
+   * the view) and is longer than the view, its ring as long as how far down
+   * it has gone. Not with backToTopButton false (nor its room at the end of
+   * the column), and not while the element shows a status instead of pages.
+   */
+  #updateTopButton() {
+    const { topWrap, topButton, topRing } = this.#ui;
+    const on = this.#shownUnlessOff('backToTopButton');
+    topWrap.hidden = !on;
+    if (!on) return;
+    let shown = false;
+    let done = 0;
+    if (this.isConnected && !this.#ui.layout.hidden) {
+      const { scrolled, view, total } = this.#scrollProgress();
+      shown = total > 0 && scrolled > view * TOP_BUTTON_AFTER;
+      done = total > 0 ? Math.max(0, Math.min(1, scrolled / total)) : 0;
+    }
+    topButton.toggleAttribute('data-mpv-shown', shown);
+    topRing.style.strokeDashoffset = String(Math.round((1 - done) * 1000) / 10);
+    if (this.#followTarget) this.#placeTopButton();
+  }
+
+  /**
+   * How far the page has been scrolled down (from where its top is just
+   * below the host's fixed header, if any), how high the view is below that
+   * header, and how far it can go (px). With a height, the body column's own.
+   */
+  #scrollProgress() {
+    if (this.#ui.frame.dataset.height === 'fixed') {
+      const main = this.#ui.main;
+      return { scrolled: main.scrollTop, view: main.clientHeight, total: main.scrollHeight - main.clientHeight };
+    }
+    const offset = this.#topOffset();
+    const base = scrollBase(this);
+    const viewTop = (base ? base.getBoundingClientRect().top + base.clientTop : 0) + offset;
+    const view = (base ? base.clientHeight : window.innerHeight) - offset;
+    const box = this.#ui.layout.getBoundingClientRect();
+    return { scrolled: viewTop - box.top, view, total: box.height - view };
+  }
+
+  /**
+   * Where sticky cannot keep the button at the bottom of the view (the side
+   * columns are moved by hand, #placeSideColumns), it is moved up by hand:
+   * to the bottom of the view, not above the top of the body column.
+   */
+  #placeTopButton() {
+    const wrap = this.#ui.topWrap;
+    const shift = parseFloat(wrap.style.translate.split(' ')[1]) || 0;
+    let offset = 0;
+    if (this.#followTarget && !wrap.hidden && getComputedStyle(wrap).position === 'sticky') {
+      const base = this.#followBase;
+      const bottom = base ? base.getBoundingClientRect().top + base.clientTop + base.clientHeight : window.innerHeight;
+      const box = wrap.getBoundingClientRect();
+      const rest = box.top - shift;
+      offset = Math.min(0, Math.max(this.#ui.main.getBoundingClientRect().top - rest, bottom - (rest + box.height)));
+    }
+    wrap.style.translate = offset < 0 ? `0 ${offset}px` : '';
+  }
+
+  /**
+   * The button was pressed: to the top of the page, gradually. The page's
+   * heading takes the focus, as the button goes away (spec 5.4).
+   */
+  #backToTop() {
+    this.#releaseToc(false);
+    this.#tocTaken = null;
+    this.#scrollToTop({ smooth: true });
+    const heading = this.#ui.content.querySelector('h1');
+    if (heading) {
+      if (!heading.hasAttribute('tabindex')) heading.setAttribute('tabindex', '-1');
+      heading.focus({ preventScroll: true });
+    }
   }
 
   /**
@@ -2333,6 +2455,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#ui.sidebar.style.translate = '';
     this.#ui.toc.style.translate = '';
     this.#ui.hitBar.style.translate = '';
+    this.#ui.topWrap.style.translate = '';
   }
 
   // The toolbar stays at the top of the view (below the host's fixed header,
@@ -2356,6 +2479,7 @@ export class MdPagesViewerElement extends HTMLElement {
       part.style.translate = offset > 0 ? `0 ${offset}px` : '';
     }
     this.#placeHitBar(viewTop + bar);
+    this.#placeTopButton();
   }
 
   /**
@@ -2491,6 +2615,10 @@ export class MdPagesViewerElement extends HTMLElement {
     }
     if (target.closest('.mpv-markdown-button') === this.#ui.markdownButton) {
       this.#downloadMarkdown();
+      return;
+    }
+    if (target.closest('.mpv-top') === this.#ui.topButton) {
+      this.#backToTop();
       return;
     }
     if (target.closest('.mpv-view-toggle') === this.#ui.viewToggle) {
