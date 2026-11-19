@@ -512,6 +512,25 @@ export class MdPagesViewerElement extends HTMLElement {
   #zoomFrom = null;
   // The button that copied a link to a heading -> the timer that puts it back.
   #copyTimers = new WeakMap();
+  // A <details> of the body opening or closing (spec 5.4) -> its animation,
+  // and whether it is to end open.
+  #detailsMotion = new WeakMap();
+  // The <details> of the body opened for printing, closed again after it.
+  #printOpened = [];
+  #onBeforePrint = () => {
+    this.#printOpened = [];
+    for (const details of this.#ui.content.querySelectorAll('details')) {
+      const moving = this.#detailsMotion.get(details);
+      // Closed, or on its way to close: opened for printing. On its way to open: just open.
+      const shut = moving ? !moving.open : !details.open;
+      if (shut) this.#printOpened.push(details);
+      if (shut || moving) this.#setDetailsOpen(details, true, { animate: false });
+    }
+  };
+  #onAfterPrint = () => {
+    for (const details of this.#printOpened) if (details.isConnected) this.#setDetailsOpen(details, false, { animate: false });
+    this.#printOpened = [];
+  };
   // "Was this page helpful?" (spec 5.4): the page it is shown for (null: not
   // shown), and the pages answered while the element is there (id -> yes).
   #feedbackPage = null;
@@ -786,6 +805,8 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#resizeObserver.observe(this.#ui.toolbar);
     this.#resizeObserver.observe(this.#ui.hitBar);
     window.addEventListener('resize', this.#onWindowResize);
+    window.addEventListener('beforeprint', this.#onBeforePrint);
+    window.addEventListener('afterprint', this.#onAfterPrint);
     this.shadowRoot.addEventListener('scroll', this.#onSpyScroll, { capture: true, passive: true });
     document.addEventListener('scroll', this.#onSpyScroll, { capture: true, passive: true });
     this.#updateLanguage();
@@ -801,6 +822,8 @@ export class MdPagesViewerElement extends HTMLElement {
     document.removeEventListener('click', this.#onDocumentClick);
     document.removeEventListener('keydown', this.#onDocumentKey);
     window.removeEventListener('resize', this.#onWindowResize);
+    window.removeEventListener('beforeprint', this.#onBeforePrint);
+    window.removeEventListener('afterprint', this.#onAfterPrint);
     this.shadowRoot.removeEventListener('scroll', this.#onSpyScroll, { capture: true });
     document.removeEventListener('scroll', this.#onSpyScroll, { capture: true });
     if (this.#spyFrame) cancelAnimationFrame(this.#spyFrame);
@@ -1539,6 +1562,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#ui.bodyStatus.hidden = true;
     this.#ui.content.hidden = false;
     this.#ui.content.replaceChildren(fragment);
+    this.#addDetailsButtons();
     // The host's scroller may only scroll now that the body is in (it was
     // too short before): what the toolbar and the columns stay in view by is
     // decided again, before the body is scrolled (spec 6).
@@ -1555,6 +1579,57 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#scroll(how, true);
     this.#updateTocCurrent();
     this.#updateTopButton();
+  }
+
+  // ---- <details> of the body (spec 5.4) ----
+
+  /**
+   * Above the first <details> of the body, when it has two or more: the
+   * buttons that open and close them all.
+   */
+  #addDetailsButtons() {
+    const all = this.#ui.content.querySelectorAll('details');
+    if (all.length < 2) return;
+    const button = (kind, key) => h('button', { type: 'button', class: 'mpv-details-button', part: `details-button ${kind}`, 'data-mpv-details': kind }, this.#text(key));
+    all[0].before(h('div', { class: 'mpv-details-buttons', part: 'details-buttons' }, button('open', 'detailsOpenAll'), button('close', 'detailsCloseAll')));
+  }
+
+  /**
+   * Opens or closes a <details> of the body, its height changing over 0.2s
+   * (at once with prefers-reduced-motion, or animate false). Asked again
+   * while it moves, it turns around from where it is.
+   */
+  #setDetailsOpen(details, open, { animate = true } = {}) {
+    const moving = this.#detailsMotion.get(details);
+    if (!moving && details.open === open) return;
+    const from = details.getBoundingClientRect().height;
+    if (moving) moving.animation.cancel();
+    this.#detailsMotion.delete(details);
+    details.style.removeProperty('overflow');
+    if (!animate || !details.isConnected || matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      details.open = open;
+      return;
+    }
+    details.open = open;
+    const to = details.getBoundingClientRect().height;
+    // Shown open while it moves; closed at the end if it is to be.
+    details.open = true;
+    details.style.setProperty('overflow', 'hidden');
+    const animation = details.animate([{ height: `${from}px` }, { height: `${to}px` }], { duration: 200, easing: 'ease' });
+    this.#detailsMotion.set(details, { animation, open });
+    animation.onfinish = () => {
+      if (this.#detailsMotion.get(details)?.animation !== animation) return;
+      this.#detailsMotion.delete(details);
+      details.open = open;
+      details.style.removeProperty('overflow');
+    };
+  }
+
+  /** Opens, at once, every closed <details> around an element of the body, so it can be seen. */
+  #openDetailsAround(element) {
+    for (let details = element.parentElement && element.parentElement.closest('details'); details && this.#ui.content.contains(details); details = details.parentElement && details.parentElement.closest('details')) {
+      if (!details.open || this.#detailsMotion.has(details)) this.#setDetailsOpen(details, true, { animate: false });
+    }
   }
 
   // ---- enlarging body images (spec 5.4) ----
@@ -1868,6 +1943,12 @@ export class MdPagesViewerElement extends HTMLElement {
     toolbar.setAttribute('part', 'toolbar');
     toolbar.append(doc.importNode(this.#ui.breadcrumb, true));
     const content = doc.importNode(this.#ui.content, true);
+    // Every <details> printed open, without the buttons that open them all (spec 5.4).
+    for (const details of content.querySelectorAll('details')) {
+      details.open = true;
+      details.style.removeProperty('overflow');
+    }
+    for (const buttons of content.querySelectorAll('.mpv-details-buttons')) buttons.remove();
     frame.append(toolbar, content);
     doc.body.style.setProperty('margin', '0');
     doc.body.append(frame);
@@ -2146,6 +2227,8 @@ export class MdPagesViewerElement extends HTMLElement {
    * from the start; with prefers-reduced-motion, at once.
    */
   #scrollToTarget(target, { smooth = false } = {}) {
+    // Inside a closed <details>, it could not be seen (spec 5.4).
+    this.#openDetailsAround(target);
     this.#tocTaken = target;
     // The host may have changed its header offset or scroll padding since.
     this.#updateJumpTop();
@@ -2631,6 +2714,23 @@ export class MdPagesViewerElement extends HTMLElement {
       return;
     }
     // Ours only: the body cannot carry class names that start with "mpv-".
+    const detailsButton = inBody ? target.closest('.mpv-details-button') : null;
+    if (detailsButton) {
+      const open = detailsButton.dataset.mpvDetails === 'open';
+      for (const details of this.#ui.content.querySelectorAll('details')) this.#setDetailsOpen(details, open);
+      return;
+    }
+    // A <details> of the body opens and closes gradually (spec 5.4), by its
+    // own summary (Enter and Space on it click too), not by a link or a
+    // button inside that summary.
+    const summary = inBody && !target.closest('a[href], button') ? target.closest('summary') : null;
+    if (summary && summary.parentElement && summary.parentElement.localName === 'details' && summary.parentElement.querySelector(':scope > summary') === summary) {
+      event.preventDefault();
+      const details = summary.parentElement;
+      const moving = this.#detailsMotion.get(details);
+      this.#setDetailsOpen(details, moving ? !moving.open : !details.open);
+      return;
+    }
     const codeCopy = inBody ? target.closest('.mpv-code-copy') : null;
     if (codeCopy) {
       event.preventDefault();
@@ -3110,6 +3210,8 @@ export class MdPagesViewerElement extends HTMLElement {
       return;
     }
     hits.marks = markHits(this.#ui.content, hits.words);
+    // Marks inside a closed <details> could not be seen: it opens (spec 5.4).
+    for (const mark of hits.marks) this.#openDetailsAround(mark);
     if (hits.marks.length === 0 || mode === 'mark') return;
     const button = (kind, key, iconOf) =>
       h('button', { type: 'button', class: 'mpv-hit-button', part: `search-hit-button ${kind}`, 'data-mpv-hit': kind }, iconOf(), this.#text(key));
@@ -3182,7 +3284,11 @@ export class MdPagesViewerElement extends HTMLElement {
     });
     const count = this.#ui.hitBar.querySelector('.mpv-hit-count');
     if (count) count.textContent = `${index + 1} / ${hits.marks.length}`;
-    if (reveal) this.#revealHit(hits.marks[index]);
+    if (reveal) {
+      // Closed again since: it opens again.
+      this.#openDetailsAround(hits.marks[index]);
+      this.#revealHit(hits.marks[index]);
+    }
   }
 
   /**
@@ -3428,8 +3534,11 @@ export class MdPagesViewerElement extends HTMLElement {
       // a link or a search result) is the one marked, not the next one.
       const line = view.top + 16;
       current = 0;
+      // A heading inside a closed <details> is not shown (spec 5.4): it is not
+      // passed. Browsers may still give it a place, just under the summary.
+      const seen = (heading) => heading && (typeof heading.checkVisibility === 'function' ? heading.checkVisibility() : heading.getClientRects().length > 0);
       items.forEach((item, index) => {
-        if (item.heading && item.heading.getBoundingClientRect().top <= line) current = index;
+        if (seen(item.heading) && item.heading.getBoundingClientRect().top <= line) current = index;
       });
       // A heading taken by a link that the body cannot scroll up to the line
       // (a short page, or one of the last headings) is still the one marked,
@@ -3437,11 +3546,11 @@ export class MdPagesViewerElement extends HTMLElement {
       // Reading past it lets it go.
       const taken = this.#tocTaken ? items.findIndex((item) => item.heading === this.#tocTaken) : -1;
       if (taken >= 0 && current > taken) this.#tocTaken = null;
-      if (taken > current && view.noFurther && items[taken].heading.getBoundingClientRect().top < view.bottom) {
+      if (taken > current && view.noFurther && seen(items[taken].heading) && items[taken].heading.getBoundingClientRect().top < view.bottom) {
         current = taken;
       } else if (view.atEnd) {
         for (let index = items.length - 1; index > current; index--) {
-          if (items[index].heading && items[index].heading.getBoundingClientRect().top < view.bottom) {
+          if (seen(items[index].heading) && items[index].heading.getBoundingClientRect().top < view.bottom) {
             current = index;
             break;
           }

@@ -24,6 +24,7 @@
 .mpv-heading-link,
 .mpv-code-copy,
 .mpv-top-wrap,
+.mpv-details-buttons,
 .mpv-zoom {
   display: none !important;
 }
