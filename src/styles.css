@@ -17,9 +17,12 @@
 }
 
 /* Reset everything inherited from the host page except color, font-family,
-   visibility and pointer-events (spec 5.8). Sizes use px/em only. */
+   visibility, pointer-events and color-scheme (spec 5.8). Sizes use px/em only. */
 .mpv {
   all: initial;
+  /* Light or dark as the host is: the browser's colours (Canvas, scroll bars)
+     and ours (light-dark() below) follow it. */
+  color-scheme: inherit;
   /* "all" leaves direction alone; an RTL host would otherwise flip the layout. */
   direction: ltr;
   unicode-bidi: normal;
@@ -1918,6 +1921,34 @@
 
 .mpv-content .mpv-callout-caution {
   --_callout: var(--mpv-color-caution, #dc2626);
+}
+
+/* On a dark host (its color-scheme), lighter colours that read well there
+   (spec 5.8). Where light-dark() is not known, the ones above stay. */
+@supports (color: light-dark(#000, #fff)) {
+  .mpv {
+    --_accent: var(--mpv-color-accent, light-dark(#2563eb, #60a5fa));
+  }
+
+  .mpv-content .mpv-callout {
+    --_callout: var(--mpv-color-note, light-dark(#2563eb, #60a5fa));
+  }
+
+  .mpv-content .mpv-callout-tip {
+    --_callout: var(--mpv-color-tip, light-dark(#16a34a, #4ade80));
+  }
+
+  .mpv-content .mpv-callout-important {
+    --_callout: var(--mpv-color-important, light-dark(#7c3aed, #a78bfa));
+  }
+
+  .mpv-content .mpv-callout-warning {
+    --_callout: var(--mpv-color-warning, light-dark(#b45309, #fbbf24));
+  }
+
+  .mpv-content .mpv-callout-caution {
+    --_callout: var(--mpv-color-caution, light-dark(#dc2626, #f87171));
+  }
 }
 
 .mpv-content .mpv-callout > :last-child {

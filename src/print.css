@@ -35,10 +35,12 @@
   outline: none !important;
 }
 
-/* Dark text on white paper, whatever the theme on screen. */
+/* Dark text on white paper, whatever the theme on screen: the colours for a
+   light page (links, callouts), even where the host is dark. */
 .mpv {
   height: auto !important;
   overflow: visible !important;
+  color-scheme: light !important;
   color: #111 !important;
   background: transparent !important;
 }
