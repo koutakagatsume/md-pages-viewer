@@ -71,6 +71,17 @@ await Promise.all([
   build({ ...common, entryPoints: ['src/index.js'], format: 'esm', outfile: 'dist/md-pages-viewer.mjs' }),
 ]);
 
+// Mermaid is loaded with import() from a URL known only at run time (spec
+// 5.4). The user's bundler must leave it alone: webpack would put an empty
+// module in its place. Minifying drops the comments that tell it so, so
+// they go back in here, on the only import() of each file.
+for (const file of ['dist/md-pages-viewer.js', 'dist/md-pages-viewer.mjs']) {
+  const code = await readFile(`${root}${file}`, 'utf8');
+  const imports = code.match(/(?<![\w$.])import\(/g) ?? [];
+  if (imports.length !== 1) throw new Error(`${file}: expected one import(), found ${imports.length}`);
+  await writeFile(`${root}${file}`, code.replace(/(?<![\w$.])import\(/, 'import(/* webpackIgnore: true */ /* @vite-ignore */ '));
+}
+
 const rule = '='.repeat(78);
 await writeFile(
   `${root}dist/THIRD_PARTY_LICENSES.txt`,

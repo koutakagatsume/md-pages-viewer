@@ -318,3 +318,29 @@ export function safeImageUrl(url) {
   purify.sanitize(root, { IN_PLACE: true, TRUSTED_TYPES_POLICY: null });
   return img.getAttribute('src') ?? '';
 }
+
+/**
+ * A diagram Mermaid drew (spec 5.4), as nodes for the page. Sanitized like a
+ * body (the same hooks: nothing opens the top layer or loads from outside),
+ * except that its <style> stays: Mermaid's rules, all under the diagram's id.
+ * @param {string} svg
+ * @returns {DocumentFragment}
+ */
+export function diagramFragment(svg) {
+  const template = document.createElement('template');
+  template.innerHTML = trustedHtml(svg);
+  const root = template.content.ownerDocument.createElement('div');
+  root.append(template.content);
+  purify.sanitize(root, {
+    IN_PLACE: true,
+    TRUSTED_TYPES_POLICY: null,
+    USE_PROFILES: { svg: true, svgFilters: true, html: true },
+    ADD_TAGS: ['style', 'foreignObject'],
+    HTML_INTEGRATION_POINTS: { foreignobject: true },
+    FORBID_TAGS: ['dialog', 'slot', 'feimage', 'form'],
+    FORBID_ATTR: ['part', 'exportparts', 'poster', 'background'],
+  });
+  const fragment = document.createDocumentFragment();
+  fragment.append(...root.childNodes);
+  return fragment;
+}

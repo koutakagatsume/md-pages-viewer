@@ -5,13 +5,13 @@ import css from './styles.css';
 import printCss from './print.css';
 import { buildModel, resolveInitialPage } from './pages.js';
 import { classifyLink, decodeFragment, headingId, pageUrl, resolveImage } from './paths.js';
-import { renderMarkdown, safeImageUrl } from './markdown.js';
+import { diagramFragment, renderMarkdown, safeImageUrl } from './markdown.js';
 import { DEFAULT_LOCALE, findLocale, resolveTexts } from './texts.js';
 
 export const TAG = 'md-pages-viewer';
 
 // Every option: a property of the element, and of `new MdPagesViewer` (viewer.js).
-export const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts', 'feedback', 'printButton', 'markdownButton', 'searchMark', 'codeCopyButton', 'searchSrc', 'backToTopButton', 'arrowKeys', 'codeHighlight'];
+export const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts', 'feedback', 'printButton', 'markdownButton', 'searchMark', 'codeCopyButton', 'searchSrc', 'backToTopButton', 'arrowKeys', 'codeHighlight', 'mermaidSrc'];
 const ATTRIBUTES = {
   pages: 'pages',
   'current-id': 'currentId',
@@ -27,6 +27,7 @@ const ATTRIBUTES = {
   'back-to-top-button': 'backToTopButton',
   'arrow-keys': 'arrowKeys',
   'code-highlight': 'codeHighlight',
+  'mermaid-src': 'mermaidSrc',
 };
 
 // How the words of a chosen search result are marked in the body (searchMark, spec 5.4).
@@ -34,7 +35,7 @@ const SEARCH_MARK_MODES = ['bar', 'nav', 'mark', 'off'];
 
 // Words in these are not marked: our controls, our words (the callout titles,
 // which the search leaves out too) and what we add after the body.
-const HIT_SKIP = 'button, svg, script, style, textarea, .mpv-callout-title, .mpv-updated, .mpv-related, .mpv-visually-hidden';
+const HIT_SKIP = 'button, svg, script, style, textarea, .mpv-callout-title, .mpv-updated, .mpv-related, .mpv-visually-hidden, .mpv-diagram';
 
 /** At most this many search results are listed (spec 5.4). */
 const SEARCH_RESULTS_SHOWN = 50;
@@ -450,12 +451,49 @@ const scrollsSideways = (node) => {
   return overflowX === 'auto' || overflowX === 'scroll';
 };
 
+// Mermaid, for the diagrams of a body (spec 5.4): loaded from mermaidSrc only
+// for a page that has one, once per URL (a failure too: it is not asked
+// again). Not bundled: it is several megabytes.
+const DEFAULT_MERMAID_SRC = 'https://cdn.jsdelivr.net/npm/mermaid@12.3.0/dist/mermaid.esm.min.mjs';
+const mermaidLoads = new Map();
+const mermaidWarned = new Set();
+function loadMermaid(src) {
+  let loading = mermaidLoads.get(src);
+  if (!loading) {
+    // The host's bundler is not to follow it: the URL is known only here.
+    loading = import(/* webpackIgnore: true */ /* @vite-ignore */ src).then((module) => {
+      const mermaid = module.default ?? module;
+      if (!mermaid || typeof mermaid.render !== 'function' || typeof mermaid.initialize !== 'function') throw new Error('it is not Mermaid');
+      return mermaid;
+    });
+    mermaidLoads.set(src, loading);
+  }
+  return loading;
+}
+
+// One diagram at a time: Mermaid's settings (the colours) are shared by
+// every viewer on the page.
+let mermaidTurn = Promise.resolve();
+let diagramCount = 0;
+function drawWithMermaid(mermaid, settings, text) {
+  const id = `mpv-diagram-${++diagramCount}`;
+  const turn = mermaidTurn.then(() => {
+    mermaid.initialize(settings);
+    return mermaid.render(id, text);
+  });
+  mermaidTurn = turn.catch(() => {});
+  // What Mermaid may leave on the page after an error.
+  return turn.finally(() => {
+    for (const left of [document.getElementById(`d${id}`), document.getElementById(id)]) left?.remove();
+  });
+}
+
 export class MdPagesViewerElement extends HTMLElement {
   static get observedAttributes() {
     return Object.keys(ATTRIBUTES);
   }
 
-  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined, feedback: undefined, printButton: undefined, markdownButton: undefined, searchMark: undefined, codeCopyButton: undefined, searchSrc: undefined, backToTopButton: undefined, arrowKeys: undefined, codeHighlight: undefined };
+  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined, feedback: undefined, printButton: undefined, markdownButton: undefined, searchMark: undefined, codeCopyButton: undefined, searchSrc: undefined, backToTopButton: undefined, arrowKeys: undefined, codeHighlight: undefined, mermaidSrc: undefined };
   // The words on our parts (spec 5.10): made from locale and texts when first
   // needed, and again after either changes.
   #words = null;
@@ -531,6 +569,10 @@ export class MdPagesViewerElement extends HTMLElement {
   // A <details> of the body opening or closing (spec 5.4) -> its animation,
   // and whether it is to end open.
   #detailsMotion = new WeakMap();
+  // Each diagram box of the body: its Mermaid code and its code block (spec 5.4).
+  #diagrams = new WeakMap();
+  #diagramsDark = false;
+  #diagramWatch = null;
   // The <details> of the body opened for printing, closed again after it.
   #printOpened = [];
   #onBeforePrint = () => {
@@ -807,6 +849,8 @@ export class MdPagesViewerElement extends HTMLElement {
   set arrowKeys(value) { this.#setOption('arrowKeys', value); }
   get codeHighlight() { return this.#options.codeHighlight; }
   set codeHighlight(value) { this.#setOption('codeHighlight', value); }
+  get mermaidSrc() { return this.#options.mermaidSrc; }
+  set mermaidSrc(value) { this.#setOption('mermaidSrc', value); }
   get styles() { return this.#options.styles; }
   set styles(value) {
     // Only the look changes, so it applies at once without drawing again.
@@ -872,6 +916,11 @@ export class MdPagesViewerElement extends HTMLElement {
     if (this.#pending.size > 0 || !this.#initialized) this.#schedule();
     // Reading for the search goes on where it stopped.
     if (this.#searchPrep) this.#prepareSearch();
+    // The diagrams shown follow the colours again (drawn again if they changed meanwhile).
+    if (this.#ui.content.querySelector('.mpv-diagram')) {
+      this.#watchDiagramColors();
+      this.#followDiagramColors();
+    }
   }
 
   disconnectedCallback() {
@@ -897,6 +946,7 @@ export class MdPagesViewerElement extends HTMLElement {
     }
     this.#resizeObserver.disconnect();
     this.#stopFollowing();
+    this.#stopDiagramWatch();
     // A list that arrives after removal must not touch the host's URL or
     // history. Drop it, and load it again if the element comes back; what
     // happened while it was loading (currentId, back/forward) still applies then.
@@ -974,7 +1024,7 @@ export class MdPagesViewerElement extends HTMLElement {
     const switched = changed.has('currentId') && this.#openCurrentId();
     if (switched) return;
     if (changed.has('urlParam')) this.#rerenderNavigation();
-    if (changed.has('imageResolver') || changed.has('baseUrl') || changed.has('urlParam') || changed.has('codeHighlight')) this.#rerenderBody();
+    if (changed.has('imageResolver') || changed.has('baseUrl') || changed.has('urlParam') || changed.has('codeHighlight') || changed.has('mermaidSrc')) this.#rerenderBody();
     if (changed.has('feedback')) this.#renderFeedback();
   }
 
@@ -1633,6 +1683,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#ui.content.hidden = false;
     this.#ui.content.replaceChildren(fragment);
     this.#addDetailsButtons();
+    this.#addDiagrams();
     // The host's scroller may only scroll now that the body is in (it was
     // too short before): what the toolbar and the columns stay in view by is
     // decided again, before the body is scrolled (spec 6).
@@ -2224,13 +2275,138 @@ export class MdPagesViewerElement extends HTMLElement {
    * turned it off (codeCopyButton, #renderCodeCopy).
    */
   #addCodeCopy() {
+    for (const pre of this.#ui.content.querySelectorAll('pre')) this.#frameCode(pre);
+  }
+
+  /** One code block in its frame, with its copy button. */
+  #frameCode(pre) {
     const label = this.#text('copyCode');
     const hidden = !this.#shownUnlessOff('codeCopyButton');
-    for (const pre of this.#ui.content.querySelectorAll('pre')) {
-      const frame = h('div', { class: 'mpv-code' });
-      pre.replaceWith(frame);
-      frame.append(pre, h('button', { type: 'button', class: 'mpv-code-copy', part: 'code-copy-button', 'aria-label': label, title: label, hidden }, ICONS.copy()));
+    const frame = h('div', { class: 'mpv-code' });
+    pre.replaceWith(frame);
+    frame.append(pre, h('button', { type: 'button', class: 'mpv-code-copy', part: 'code-copy-button', 'aria-label': label, title: label, hidden }, ICONS.copy()));
+  }
+
+  // ---- diagrams (spec 5.4) ----
+
+  /** Where Mermaid is loaded from, or null when diagrams are off (mermaidSrc false). */
+  #mermaidSrc() {
+    const value = this.#options.mermaidSrc;
+    if (value === false || value === 'false') return null;
+    return typeof value === 'string' && value.trim() !== '' ? value.trim() : DEFAULT_MERMAID_SRC;
+  }
+
+  /**
+   * Each "```mermaid" code block of the body becomes a box where Mermaid
+   * draws its diagram. At once, before the search's marks (they never go
+   * into its code); the box says it is loading until the diagram is drawn.
+   */
+  #addDiagrams() {
+    const src = this.#mermaidSrc();
+    const codes = src === null ? [] : [...this.#ui.content.querySelectorAll('pre > code.language-mermaid')];
+    if (codes.length === 0) {
+      this.#stopDiagramWatch();
+      return;
     }
+    const boxes = codes.map((code) => {
+      const pre = code.parentElement;
+      const box = h('div', { class: 'mpv-diagram', part: 'diagram', 'aria-busy': 'true' }, h('span', { class: 'mpv-diagram-loading' }, this.#text('diagramLoading')));
+      pre.replaceWith(box);
+      this.#diagrams.set(box, { pre, text: code.textContent.replace(/\n$/, '') });
+      return box;
+    });
+    this.#watchDiagramColors();
+    this.#drawDiagrams(src, boxes);
+  }
+
+  /**
+   * Draws the diagrams of these boxes, in Mermaid's colours for a dark
+   * viewer or a light one, as the viewer is now. Where Mermaid cannot be
+   * loaded or a diagram has an error, its code block comes back.
+   */
+  async #drawDiagrams(src, boxes) {
+    let mermaid;
+    try {
+      mermaid = await loadMermaid(src);
+    } catch (error) {
+      if (!mermaidWarned.has(src)) {
+        mermaidWarned.add(src);
+        warn(`Could not load Mermaid from "${src}" (the diagrams are shown as their code): ${error.message}`);
+      }
+      for (const box of boxes) this.#diagramToCode(box);
+      return;
+    }
+    const dark = this.#isDark();
+    this.#diagramsDark = dark;
+    const settings = {
+      startOnLoad: false,
+      securityLevel: 'strict',
+      suppressErrorRendering: true,
+      theme: dark ? 'dark' : 'default',
+      fontFamily: getComputedStyle(this.#ui.frame).fontFamily,
+      // Not to be changed by a diagram's own settings (%%{init}%%).
+      secure: ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'maxEdges', 'suppressErrorRendering', 'themeCSS'],
+    };
+    for (const box of boxes) {
+      const diagram = this.#diagrams.get(box);
+      if (!diagram || !box.isConnected) continue;
+      try {
+        const { svg } = await drawWithMermaid(mermaid, settings, diagram.text);
+        if (!box.isConnected) continue;
+        box.replaceChildren(diagramFragment(svg));
+        box.removeAttribute('aria-busy');
+      } catch (error) {
+        warn(`Could not draw a diagram (it is shown as its code): ${error.message}`);
+        this.#diagramToCode(box);
+      }
+    }
+  }
+
+  /** A diagram not drawn: its code block, as any other (in its frame, with its copy button). */
+  #diagramToCode(box) {
+    const diagram = this.#diagrams.get(box);
+    if (!diagram || !box.isConnected) return;
+    this.#diagrams.delete(box);
+    box.replaceWith(diagram.pre);
+    this.#frameCode(diagram.pre);
+  }
+
+  /** Light text, so a dark background (the host's colours or its color-scheme, spec 5.8). */
+  #isDark() {
+    const [r, g, b] = (getComputedStyle(this.#ui.frame).color.match(/[0-9.]+/g) || ['0', '0', '0']).map(Number);
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b > 128;
+  }
+
+  /**
+   * While diagrams are shown, they are drawn again in the other colours when
+   * the viewer turns dark or light: the host changing the attributes of its
+   * <html>, <body> or this element (a class, a style), or the OS its theme.
+   */
+  #watchDiagramColors() {
+    if (this.#diagramWatch) return;
+    const check = () => this.#followDiagramColors();
+    const observer = new MutationObserver(check);
+    for (const node of [document.documentElement, document.body, this]) if (node) observer.observe(node, { attributes: true });
+    const media = matchMedia('(prefers-color-scheme: dark)');
+    media.addEventListener('change', check);
+    this.#diagramWatch = () => {
+      observer.disconnect();
+      media.removeEventListener('change', check);
+    };
+  }
+
+  /** The diagrams of the body drawn again, if the viewer turned dark or light since they were drawn. */
+  #followDiagramColors() {
+    if (this.#isDark() === this.#diagramsDark) return;
+    const src = this.#mermaidSrc();
+    const boxes = [...this.#ui.content.querySelectorAll('.mpv-diagram')].filter((box) => this.#diagrams.has(box));
+    if (src !== null && boxes.length > 0) this.#drawDiagrams(src, boxes);
+  }
+
+  #stopDiagramWatch() {
+    if (!this.#diagramWatch) return;
+    this.#diagramWatch();
+    this.#diagramWatch = null;
   }
 
   /** The buttons follow the option at once, without drawing the body again. */

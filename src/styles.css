@@ -2101,6 +2101,27 @@
   background: var(--_hl-removed);
 }
 
+/* A diagram ("```mermaid", spec 5.4), drawn by Mermaid in a box of its own:
+   no wider than the body, a wide one scrolls sideways inside. */
+.mpv-content .mpv-diagram {
+  margin: 0 0 1em;
+  padding: var(--_space);
+  border: 1px solid var(--_border);
+  border-radius: 8px;
+  overflow-x: auto;
+  text-align: center;
+}
+
+.mpv-content .mpv-diagram svg {
+  max-width: 100%;
+  height: auto;
+}
+
+.mpv-content .mpv-diagram-loading {
+  color: var(--_muted);
+  font-size: 0.9em;
+}
+
 .mpv-content table {
   border-collapse: collapse;
 }

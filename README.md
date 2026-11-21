@@ -43,7 +43,7 @@ CDN から読み込みます。
 <script src="https://cdn.jsdelivr.net/npm/md-pages-viewer@1/dist/md-pages-viewer.js"></script>
 ```
 
-外部の CDN に接続できない環境では、`md-pages-viewer.js` を自分のサーバーに置いて読み込みます。CSS はこのファイルに含まれているので、`<link>` は要りません。ファイルの大きさは約295KB（gzip で約93KB）で、Markdown の変換（marked）とサニタイズ（DOMPurify）とコードの色分け（highlight.js）を含みます。
+外部の CDN に接続できない環境では、`md-pages-viewer.js` を自分のサーバーに置いて読み込みます。CSS はこのファイルに含まれているので、`<link>` は要りません。ファイルの大きさは約299KB（gzip で約95KB）で、Markdown の変換（marked）とサニタイズ（DOMPurify）とコードの色分け（highlight.js）を含みます。
 
 ビルドするプロジェクトでは npm からインストールします。
 
@@ -148,6 +148,7 @@ viewer.element.currentId = 'faq';
 - 本文の見出し（h2〜h6）にマウスを置くと、見出しの右にリンクのボタンが出ます。押すと、そのページと見出しを指す URL（組み込み先の URL の `?page=` と `#` を差し替えたもの）をコピーし、「リンクをコピーしました」を1.5秒ほど出します。ページは動かず、URL も変わりません。Tab でボタンに移って押すこともでき、タッチの画面ではいつも薄く出ます。`urlParam` に `false` を指定したときは、その URL でページが開かないので出しません
 - 本文のコードのかたまりの右上に、コードをコピーするボタンがあります。ふだんは見えず、コードにマウスを置く・Tab で移ると出ます（タッチの画面ではいつも薄く出ます）。押すとそのコードをコピーし、「コピーしました」を1.5秒ほど出します。出したくないときは `codeCopyButton` に `false` を指定します
 - 言語を書いたコードのかたまり（```js など）は、言語に合わせて色分けします。対応する言語は HTML・CSS・JavaScript・TypeScript・JSON・bash・シェル・PowerShell・Python・SQL・YAML・Markdown・diff・PHP・Java・C#・Go・Ruby・ini の19で、別名（js・ts・html・sh・yml・md・py・cs・rb・ps1 など）でも書けます。言語を書いていないもの・ほかの言語は色を付けません。ダークの画面では暗い背景向けの色にします。色を付けたくないときは `codeHighlight` に `false` を指定します
+- 本文に ```mermaid で書いた図（流れ図・順番の図など）は、[Mermaid](https://mermaid.js.org/) で描いた図にします。Mermaid はとても大きいので本ライブラリには含めず、図のあるページを開いたときだけ jsDelivr から読み込みます（同じ URL からは1回だけ）。描くまでは「図を読み込んでいます…」と出します。読み込めないとき（外につながらない、CSP で止められているなど）や、図の書き方に誤りがあるときは、コードのまま出して、コンソールに警告を出します。組み込み先がダークのときは暗い色で描き、明暗が変わると描き直します。読み込む先は `mermaidSrc` で変えられ、`false` を指定すると図にしません
 - 本文を少しでも下へスクロールすると、本文の列の右下に、ページの先頭へ戻る丸いボタンが出ます。まわりの輪は、ページのどこまで下へ来たかを示します。押すと、ページの先頭へなめらかに戻り、ページの見出しに移ります。ボタンは前後のページの下に置き場を持つので、いちばん下までスクロールしても、前後のページには重なりません。出したくないときは `backToTopButton` に `false` を指定します
 - 本文の `<details>` は、押すと開く枠のカードになります（下の「折りたたみ」を参照）
 - ツールバーの右（検索欄の右）に、PDF と Markdown のアイコンのボタンが出ます（本文のあるページだけ）。PDF のボタンは、そのページだけを新しいタブに出して印刷の画面を開きます。印刷先で「PDF として保存」を選ぶと PDF のファイルになります。Markdown のボタンは、そのページの Markdown を「ページ名.md」でダウンロードします（画像のファイルは入りません）。ボタンを出したくないときは、オプションの `printButton`・`markdownButton` に `false` を指定します（片方だけでも指定できます）
@@ -174,6 +175,7 @@ viewer.element.currentId = 'faq';
 | `searchMark` | `search-mark` | string | 検索の結果を選んだとき、開いたページの本文の語に付ける印の形です。`"bar"`（初期値。印と、本文の上に件数と［印を消す］の帯）・`"nav"`（帯に［前へ］［次へ］も出し、帯は上に残る）・`"mark"`（印だけ）・`"off"`（付けない。`false` でも同じ）。「画面」を参照 |
 | `codeCopyButton` | `code-copy-button` | boolean | `false`（属性は `"false"`）で、本文のコードのかたまりのコピーボタンを出しません（初期値は出す）。「画面」を参照 |
 | `codeHighlight` | `code-highlight` | boolean | `false`（属性は `"false"`）で、本文のコードを言語に合わせて色分けしません（初期値は色分けする）。「画面」を参照 |
+| `mermaidSrc` | `mermaid-src` | string / false | 本文の図（```mermaid）を描く Mermaid の ES モジュールの URL です（初期値は `https://cdn.jsdelivr.net/npm/mermaid@12.3.0/dist/mermaid.esm.min.mjs`）。外につながらない環境では、npm の `mermaid` パッケージの `dist` フォルダーを自分のサーバーに置き、その中の `mermaid.esm.min.mjs` の URL を指定します。`false`（属性は `"false"`）で図にせず、コードのまま出します。「画面」を参照 |
 | `searchSrc` | `search-src` | boolean | `false`（属性は `"false"`）で、検索のために `src` のページの本文を取得せず、`src` のページはページ名と `description` だけを探します（初期値は取得する）。「画面」を参照 |
 | `backToTopButton` | `back-to-top-button` | boolean | `false`（属性は `"false"`）で、本文の列の右下の上へ戻るボタンを出しません（初期値は出す）。「画面」を参照 |
 | `arrowKeys` | `arrow-keys` | boolean | `false`（属性は `"false"`）で、← → キーで前後のページへ移らず、「前へ」「次へ」の横のキーの印も出しません（初期値は使う）。「画面」を参照 |
@@ -299,6 +301,7 @@ viewer.texts = {
 | `copyCode`・`codeCopied` | コードのコピーボタンの名前と、コピーしたときの表示（できなかったときは `copyFailed`） | コードをコピー・コピーしました |
 | `backToTop` | 上へ戻るボタンの名前 | ページの先頭へ |
 | `detailsOpenAll`・`detailsCloseAll` | 折りたたみを全部開く・閉じるボタン | すべて開く・すべて閉じる |
+| `diagramLoading` | 図（```mermaid）を描くまでの表示 | 図を読み込んでいます… |
 | `updated` | 本文の最後の最終更新日（関数。`locale` の書き方にした日付を受け取る） | 最終更新：（日付） |
 | `related` | 関連リソースの見出しと、読み上げ用の名前 | 関連リソース |
 | `newTab` | 関連リソースのほかのサイトへのリンクに付ける、読み上げ用の文字 | （新しいタブで開く） |
@@ -498,6 +501,7 @@ md-pages-viewer {
 | `feedback-thanks` | 答えた後のお礼 |
 | `heading-link-tip` | コピーしたときにボタンの横に出る「リンクをコピーしました」 |
 | `code-copy-button` | 本文のコードのかたまりの右上の、コードをコピーするボタン |
+| `diagram` | 本文の図（```mermaid）の枠 |
 | `code-copy-tip` | コピーしたときにボタンの横に出る「コピーしました」 |
 | `back-to-top-button` | 本文の列の右下の、ページの先頭へ戻るボタン |
 | `details-buttons` | 本文の最初の折りたたみの上の、「すべて開く」「すべて閉じる」のボタンの並び |
@@ -554,9 +558,12 @@ Markdown を変換した HTML は、画面に入れる前に DOMPurify でサニ
 
 `styles` で渡す CSS はサニタイズしません（[本文の見た目](#本文の見た目styles)を参照）。
 
+本文に図（```mermaid）があるページでは、図を描くために Mermaid を外から（初期値は jsDelivr から）読み込んで実行します。Mermaid はいちばん厳しい設定（`securityLevel: 'strict'`）で使い、描いた図もサニタイズします。読み込ませたくないときは、`mermaidSrc` に `false` か、自分のサーバーに置いた Mermaid の URL を指定してください。
+
 Content Security Policy を使うページでも動きます。
 
 - `style-src` に `'unsafe-inline'` がなくても CSS は効きます
+- 図（```mermaid）を描くには、`script-src` で Mermaid の読み込み先（初期値は `https://cdn.jsdelivr.net`）を許可します。許可しないときは、図をコードのまま出します
 - Trusted Types を強制するページでは、`md-pages-viewer` という名前のポリシーを1つ使います。`trusted-types` ディレクティブで許可する名前を限定している場合は、この名前を追加してください
 
 ```text

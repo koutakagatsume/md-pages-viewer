@@ -78,12 +78,13 @@
 }
 
 /* A heading is not left alone at the bottom of a page; a table row, an
-   image, a code block, a callout and the related links are not split. */
+   image, a code block, a diagram, a callout and the related links are not
+   split. */
 .mpv-content :is(h1, h2, h3, h4, h5, h6) {
   break-after: avoid;
 }
 
-.mpv-content :is(tr, img, pre, .mpv-callout, .mpv-related-body) {
+.mpv-content :is(tr, img, pre, .mpv-diagram, .mpv-callout, .mpv-related-body) {
   break-inside: avoid;
 }
 
