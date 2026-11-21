@@ -736,7 +736,7 @@ test('[配布/3通りの読み込み] npm install（バンドラー）で "md-pa
     logLevel: 'silent',
   });
   const inputs = Object.keys(result.metafile.inputs).map((p) => p.replaceAll('\\', '/')).sort();
-  // Resolved to the ES module build, which needs nothing else (marked, DOMPurify and the CSS are inside).
+  // Resolved to the ES module build, which needs nothing else (marked, DOMPurify, highlight.js and the CSS are inside).
   expect(inputs).toEqual(['dist/md-pages-viewer.mjs', 'test/fixtures/embed-dist/npm/main.js']);
 
   const html = `${ORIGIN}${FIX}/npm/index.html`;
@@ -779,10 +779,10 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.`;
 
-// Spec 8: name, copyright notice and license name of this library, marked and
-// DOMPurify. Copyright holders as in marked's LICENSE ("Copyright (c) ...
+// Spec 8: name, copyright notice and license name of this library, marked,
+// DOMPurify and highlight.js. Copyright holders as in marked's LICENSE ("Copyright (c) ...
 // MarkedJS", "... Christopher Jeffrey") and DOMPurify's notice ("(c) Cure53
-// and other contributors").
+// and other contributors"); highlight.js's ("Copyright (c) 2006, Ivan Sagalaev").
 const HEADER_ITEMS = [
   ['md-pages-viewer の名前', /md-pages-viewer/],
   ['md-pages-viewer の著作権表示', /Copyright \(c\) 2026 Kota Kagatsume/],
@@ -794,6 +794,9 @@ const HEADER_ITEMS = [
   ['DOMPurify の名前', /DOMPurify/],
   ['DOMPurify の著作権表示（Cure53）', /(Copyright|\(c\)|©)[^\n]*Cure53/i],
   ['DOMPurify のライセンス名（Apache-2.0）', /Apache/i],
+  ['highlight.js の名前', /highlight\.js/],
+  ['highlight.js の著作権表示（Ivan Sagalaev）', /(Copyright|\(c\)|©)[^\n]*Ivan Sagalaev/i],
+  ['highlight.js のライセンス名（BSD-3-Clause）', /highlight\.js[^\n]*BSD 3-Clause/i],
 ];
 
 /** Comments at the very top of the file, before any code. */
@@ -812,7 +815,7 @@ function leadingComments(code) {
 const isLegalComment = (comment) => comment.startsWith('/*!') || comment.startsWith('//!') || /@license|@preserve/.test(comment);
 
 for (const file of ['md-pages-viewer.js', 'md-pages-viewer.mjs']) {
-  test(`[配布/ライセンス表記] dist/${file} の先頭に、本ライブラリと marked・DOMPurify の名前・著作権表示・ライセンス名がある`, async () => {
+  test(`[配布/ライセンス表記] dist/${file} の先頭に、本ライブラリと marked・DOMPurify・highlight.js の名前・著作権表示・ライセンス名がある`, async () => {
     const code = await readFile(path.join(ROOT, 'dist', file), 'utf8');
     const head = leadingComments(code);
     expect(head.length, 'ファイルの先頭にコメントがない').toBeGreaterThan(0);
@@ -862,20 +865,23 @@ test('[配布/ライセンス表記] npmパッケージに、MITライセンス�
   expect(normalize(text)).toContain(normalize(MIT_TERMS));
 });
 
-test('[配布/ライセンス表記] npmパッケージに、marked（MIT と John Gruber の Markdown のライセンス）と DOMPurify（Apache-2.0）のライセンス全文のファイルが入る', async () => {
+test('[配布/ライセンス表記] npmパッケージに、marked（MIT と John Gruber の Markdown のライセンス）と DOMPurify（Apache-2.0）と highlight.js（BSD-3-Clause）のライセンス全文のファイルが入る', async () => {
   const files = npmPackageFiles();
   const markedFull = normalize(await readFile(path.join(ROOT, 'node_modules', 'marked', 'LICENSE'), 'utf8'));
   const dompurifyFull = normalize(await readFile(path.join(ROOT, 'node_modules', 'dompurify', 'LICENSE'), 'utf8'));
+  const highlightFull = normalize(await readFile(path.join(ROOT, 'node_modules', 'highlight.js', 'LICENSE'), 'utf8'));
   // Sanity: these are the texts the spec names.
   expect(markedFull).toContain(normalize(MIT_TERMS.split('\n\n')[0]));
   expect(markedFull).toContain('John Gruber');
   expect(dompurifyFull).toContain('Apache License Version 2.0, January 2004');
   expect(dompurifyFull).toContain('END OF TERMS AND CONDITIONS');
+  expect(highlightFull).toContain('BSD 3-Clause License');
+  expect(highlightFull).toContain('Ivan Sagalaev');
 
   const holders = [];
   for (const file of files) {
     const text = normalize(await readFile(path.join(ROOT, file), 'utf8'));
-    if (text.includes(markedFull) && text.includes(dompurifyFull)) holders.push(file);
+    if (text.includes(markedFull) && text.includes(dompurifyFull) && text.includes(highlightFull)) holders.push(file);
   }
   expect(holders.length, `パッケージの中身: ${files.join(', ')}`).toBeGreaterThan(0);
 });

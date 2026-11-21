@@ -1,5 +1,6 @@
 // Builds dist/md-pages-viewer.js (<script>, sets window.MdPagesViewer) and
 // dist/md-pages-viewer.mjs (ES module), plus dist/THIRD_PARTY_LICENSES.txt.
+// Bundled: marked, DOMPurify and highlight.js (its core and some languages).
 
 import { build, transform } from 'esbuild';
 import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
@@ -11,9 +12,15 @@ const readJson = async (path) => JSON.parse(await readFile(join(root, path), 'ut
 const pkg = await readJson('package.json');
 const marked = await readJson('node_modules/marked/package.json');
 const dompurify = await readJson('node_modules/dompurify/package.json');
+const highlight = await readJson('node_modules/highlight.js/package.json');
 
 const markedLicense = await readFile(`${root}node_modules/marked/LICENSE`, 'utf8');
 const dompurifyLicense = await readFile(`${root}node_modules/dompurify/LICENSE`, 'utf8');
+const highlightLicense = await readFile(`${root}node_modules/highlight.js/LICENSE`, 'utf8');
+const highlightCopyright = highlightLicense
+  .split(/\r?\n/)
+  .find((line) => line.startsWith('Copyright'))
+  .trim();
 const markedCopyrights = markedLicense
   .split(/\r?\n/)
   .filter((line) => line.startsWith('Copyright'))
@@ -27,6 +34,7 @@ const banner = `/*! ${pkg.name} v${pkg.version} | MIT License | Copyright (c) 20
  * - marked v${marked.version} | MIT License, and the Markdown license (BSD-style)
 ${markedCopyrights}
  * - DOMPurify v${dompurify.version} | Apache License 2.0 | (c) Cure53 and other contributors
+ * - highlight.js v${highlight.version} | BSD 3-Clause License | ${highlightCopyright}
  * Full license texts: THIRD_PARTY_LICENSES.txt */`;
 
 // The stylesheet is imported as a minified string and put into the shadow root.
@@ -83,6 +91,12 @@ await writeFile(
     'License 2.0. It is used here under the Apache License 2.0:',
     rule,
     dompurifyLicense.trim(),
+    '',
+    rule,
+    `highlight.js v${highlight.version} (its core and some of its languages)`,
+    'https://github.com/highlightjs/highlight.js',
+    rule,
+    highlightLicense.trim(),
     '',
   ].join('\n'),
 );

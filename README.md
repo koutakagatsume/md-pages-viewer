@@ -43,7 +43,7 @@ CDN から読み込みます。
 <script src="https://cdn.jsdelivr.net/npm/md-pages-viewer@1/dist/md-pages-viewer.js"></script>
 ```
 
-外部の CDN に接続できない環境では、`md-pages-viewer.js` を自分のサーバーに置いて読み込みます。CSS はこのファイルに含まれているので、`<link>` は要りません。ファイルの大きさは約188KB（gzip で約58KB）で、Markdown の変換（marked）とサニタイズ（DOMPurify）を含みます。
+外部の CDN に接続できない環境では、`md-pages-viewer.js` を自分のサーバーに置いて読み込みます。CSS はこのファイルに含まれているので、`<link>` は要りません。ファイルの大きさは約295KB（gzip で約93KB）で、Markdown の変換（marked）とサニタイズ（DOMPurify）とコードの色分け（highlight.js）を含みます。
 
 ビルドするプロジェクトでは npm からインストールします。
 
@@ -147,6 +147,7 @@ viewer.element.currentId = 'faq';
 - 幅に収まらない表は、本文全体ではなく表の中だけが横にスクロールします
 - 本文の見出し（h2〜h6）にマウスを置くと、見出しの右にリンクのボタンが出ます。押すと、そのページと見出しを指す URL（組み込み先の URL の `?page=` と `#` を差し替えたもの）をコピーし、「リンクをコピーしました」を1.5秒ほど出します。ページは動かず、URL も変わりません。Tab でボタンに移って押すこともでき、タッチの画面ではいつも薄く出ます。`urlParam` に `false` を指定したときは、その URL でページが開かないので出しません
 - 本文のコードのかたまりの右上に、コードをコピーするボタンがあります。ふだんは見えず、コードにマウスを置く・Tab で移ると出ます（タッチの画面ではいつも薄く出ます）。押すとそのコードをコピーし、「コピーしました」を1.5秒ほど出します。出したくないときは `codeCopyButton` に `false` を指定します
+- 言語を書いたコードのかたまり（```js など）は、言語に合わせて色分けします。対応する言語は HTML・CSS・JavaScript・TypeScript・JSON・bash・シェル・PowerShell・Python・SQL・YAML・Markdown・diff・PHP・Java・C#・Go・Ruby・ini の19で、別名（js・ts・html・sh・yml・md・py・cs・rb・ps1 など）でも書けます。言語を書いていないもの・ほかの言語は色を付けません。ダークの画面では暗い背景向けの色にします。色を付けたくないときは `codeHighlight` に `false` を指定します
 - 本文を少しでも下へスクロールすると、本文の列の右下に、ページの先頭へ戻る丸いボタンが出ます。まわりの輪は、ページのどこまで下へ来たかを示します。押すと、ページの先頭へなめらかに戻り、ページの見出しに移ります。ボタンは前後のページの下に置き場を持つので、いちばん下までスクロールしても、前後のページには重なりません。出したくないときは `backToTopButton` に `false` を指定します
 - 本文の `<details>` は、押すと開く枠のカードになります（下の「折りたたみ」を参照）
 - ツールバーの右（検索欄の右）に、PDF と Markdown のアイコンのボタンが出ます（本文のあるページだけ）。PDF のボタンは、そのページだけを新しいタブに出して印刷の画面を開きます。印刷先で「PDF として保存」を選ぶと PDF のファイルになります。Markdown のボタンは、そのページの Markdown を「ページ名.md」でダウンロードします（画像のファイルは入りません）。ボタンを出したくないときは、オプションの `printButton`・`markdownButton` に `false` を指定します（片方だけでも指定できます）
@@ -172,6 +173,7 @@ viewer.element.currentId = 'faq';
 | `markdownButton` | `markdown-button` | boolean | `false`（属性は `"false"`）で、ツールバーの Markdown のボタンを出しません（初期値は出す）。「画面」を参照 |
 | `searchMark` | `search-mark` | string | 検索の結果を選んだとき、開いたページの本文の語に付ける印の形です。`"bar"`（初期値。印と、本文の上に件数と［印を消す］の帯）・`"nav"`（帯に［前へ］［次へ］も出し、帯は上に残る）・`"mark"`（印だけ）・`"off"`（付けない。`false` でも同じ）。「画面」を参照 |
 | `codeCopyButton` | `code-copy-button` | boolean | `false`（属性は `"false"`）で、本文のコードのかたまりのコピーボタンを出しません（初期値は出す）。「画面」を参照 |
+| `codeHighlight` | `code-highlight` | boolean | `false`（属性は `"false"`）で、本文のコードを言語に合わせて色分けしません（初期値は色分けする）。「画面」を参照 |
 | `searchSrc` | `search-src` | boolean | `false`（属性は `"false"`）で、検索のために `src` のページの本文を取得せず、`src` のページはページ名と `description` だけを探します（初期値は取得する）。「画面」を参照 |
 | `backToTopButton` | `back-to-top-button` | boolean | `false`（属性は `"false"`）で、本文の列の右下の上へ戻るボタンを出しません（初期値は出す）。「画面」を参照 |
 | `arrowKeys` | `arrow-keys` | boolean | `false`（属性は `"false"`）で、← → キーで前後のページへ移らず、「前へ」「次へ」の横のキーの印も出しません（初期値は使う）。「画面」を参照 |
@@ -545,7 +547,7 @@ viewer.styles = `
 
 ## セキュリティ
 
-Markdown を変換した HTML は、画面に入れる前に DOMPurify でサニタイズします。スクリプトの実行につながるものに加えて、次のものも除去します。
+Markdown を変換した HTML は、画面に入れる前に DOMPurify でサニタイズします（コードの色分けの結果も含みます）。スクリプトの実行につながるものに加えて、次のものも除去します。
 
 - `<style>`、`<form>`、`<dialog>`、`<slot>`、`popover` などの属性（組み込み先の画面に影響するため）
 - `imageResolver` を通らずに画像を読み込むもの（`poster`・`background` 属性、CSS の `url()` を含む `style` 属性など）
@@ -585,4 +587,4 @@ npm run serve
 
 MIT License。Copyright (c) 2026 Kota Kagatsume
 
-同梱している marked と DOMPurify のライセンスは `dist/THIRD_PARTY_LICENSES.txt` にあります。
+同梱している marked と DOMPurify と highlight.js のライセンスは `dist/THIRD_PARTY_LICENSES.txt` にあります。

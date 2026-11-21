@@ -11,7 +11,7 @@ import { DEFAULT_LOCALE, findLocale, resolveTexts } from './texts.js';
 export const TAG = 'md-pages-viewer';
 
 // Every option: a property of the element, and of `new MdPagesViewer` (viewer.js).
-export const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts', 'feedback', 'printButton', 'markdownButton', 'searchMark', 'codeCopyButton', 'searchSrc', 'backToTopButton', 'arrowKeys'];
+export const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts', 'feedback', 'printButton', 'markdownButton', 'searchMark', 'codeCopyButton', 'searchSrc', 'backToTopButton', 'arrowKeys', 'codeHighlight'];
 const ATTRIBUTES = {
   pages: 'pages',
   'current-id': 'currentId',
@@ -26,6 +26,7 @@ const ATTRIBUTES = {
   'search-src': 'searchSrc',
   'back-to-top-button': 'backToTopButton',
   'arrow-keys': 'arrowKeys',
+  'code-highlight': 'codeHighlight',
 };
 
 // How the words of a chosen search result are marked in the body (searchMark, spec 5.4).
@@ -454,7 +455,7 @@ export class MdPagesViewerElement extends HTMLElement {
     return Object.keys(ATTRIBUTES);
   }
 
-  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined, feedback: undefined, printButton: undefined, markdownButton: undefined, searchMark: undefined, codeCopyButton: undefined, searchSrc: undefined, backToTopButton: undefined, arrowKeys: undefined };
+  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined, feedback: undefined, printButton: undefined, markdownButton: undefined, searchMark: undefined, codeCopyButton: undefined, searchSrc: undefined, backToTopButton: undefined, arrowKeys: undefined, codeHighlight: undefined };
   // The words on our parts (spec 5.10): made from locale and texts when first
   // needed, and again after either changes.
   #words = null;
@@ -804,6 +805,8 @@ export class MdPagesViewerElement extends HTMLElement {
   set backToTopButton(value) { this.#setOption('backToTopButton', value); }
   get arrowKeys() { return this.#options.arrowKeys; }
   set arrowKeys(value) { this.#setOption('arrowKeys', value); }
+  get codeHighlight() { return this.#options.codeHighlight; }
+  set codeHighlight(value) { this.#setOption('codeHighlight', value); }
   get styles() { return this.#options.styles; }
   set styles(value) {
     // Only the look changes, so it applies at once without drawing again.
@@ -971,7 +974,7 @@ export class MdPagesViewerElement extends HTMLElement {
     const switched = changed.has('currentId') && this.#openCurrentId();
     if (switched) return;
     if (changed.has('urlParam')) this.#rerenderNavigation();
-    if (changed.has('imageResolver') || changed.has('baseUrl') || changed.has('urlParam')) this.#rerenderBody();
+    if (changed.has('imageResolver') || changed.has('baseUrl') || changed.has('urlParam') || changed.has('codeHighlight')) this.#rerenderBody();
     if (changed.has('feedback')) this.#renderFeedback();
   }
 
@@ -1392,6 +1395,7 @@ export class MdPagesViewerElement extends HTMLElement {
           warning: this.#text('calloutWarning'),
           caution: this.#text('calloutCaution'),
         },
+        highlight: this.#shownUnlessOff('codeHighlight'),
       });
     } catch (error) {
       // Never leave the previous page's body under the new sidebar/breadcrumb.

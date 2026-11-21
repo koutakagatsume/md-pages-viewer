@@ -5,6 +5,7 @@
 import { Marked } from 'marked';
 import createDOMPurify from 'dompurify';
 import { resolveSrcset } from './paths.js';
+import { highlightCode } from './highlight.js';
 
 const escapeHtml = (value) =>
   value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -83,6 +84,22 @@ purify.addHook('uponSanitizeAttribute', (node, data) => {
   }
 });
 
+/**
+ * Colours each code block ("```js" and so on) whose language is known
+ * (spec 5.4): its text becomes spans with hljs-* classes. Done before
+ * sanitizing, so what highlight.js makes is sanitized like the rest.
+ */
+function highlightBlocks(root) {
+  for (const code of root.querySelectorAll('pre > code[class*="language-"]')) {
+    const language = (code.className.match(/(?:^|\s)language-(\S+)/) || [])[1];
+    const html = highlightCode(code.textContent, language);
+    if (html === null) continue;
+    const parsed = root.ownerDocument.createElement('template');
+    parsed.innerHTML = trustedHtml(html);
+    code.replaceChildren(parsed.content);
+  }
+}
+
 // Markers that tell the element how a link behaves. Any that come from the
 // Markdown itself are removed first so content cannot forge them; ours are
 // added after sanitizing, so DOMPurify's value checks (it drops values such
@@ -100,21 +117,23 @@ const SHORT_CELL = 6;
  *   link: (href: string) => {type: string, id?: string, hash?: string, url?: string},
  *   pageHref: (id: string, hash: string) => string,
  * }} resolve
- * @param {{inert?: boolean, calloutLabels?: Record<string, string>}} [options]
+ * @param {{inert?: boolean, calloutLabels?: Record<string, string>, highlight?: boolean}} [options]
  *   inert: keep the result in the template's document, which has no browsing
  *   context, so nothing in it ever loads (for reading text only). Otherwise
  *   the result belongs to the page's document. calloutLabels: the heading of
  *   each kind of callout (note, tip, important, warning, caution), in the
- *   viewer's language; a kind not given is headed by its name.
+ *   viewer's language; a kind not given is headed by its name. highlight:
+ *   colour the code blocks whose language is known (spec 5.4).
  * @returns {DocumentFragment}
  */
-export function renderMarkdown(markdown, resolve, { inert = false, calloutLabels = {} } = {}) {
+export function renderMarkdown(markdown, resolve, { inert = false, calloutLabels = {}, highlight = false } = {}) {
   const template = document.createElement('template');
   template.innerHTML = trustedHtml(marked.parse(markdown));
   // Everything below works on this one tree and it is never serialized and
   // parsed again, so what we resolve is exactly what gets sanitized.
   const root = template.content.ownerDocument.createElement('div');
   root.append(template.content);
+  if (highlight) highlightBlocks(root);
 
   for (const el of root.querySelectorAll('*')) {
     for (const { name } of [...el.attributes]) if (name.startsWith(MARK)) el.removeAttribute(name);

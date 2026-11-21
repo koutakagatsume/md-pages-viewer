@@ -1992,6 +1992,115 @@
   font-size: 0.85em;
 }
 
+/* Code coloured by its language (codeHighlight, spec 5.4): the colours of
+   highlight.js's classes. They read well on a light page, and on a dark one
+   (its color-scheme) lighter ones do. */
+.mpv-content pre code {
+  --_hl-keyword: #cf222e;
+  --_hl-title: #8250df;
+  --_hl-constant: #0550ae;
+  --_hl-string: #0a3069;
+  --_hl-builtin: #953800;
+  --_hl-comment: #6e7781;
+  --_hl-tag: #116329;
+  --_hl-added: #dafbe1;
+  --_hl-removed: #ffebe9;
+  --_hl-removed-text: #82071e;
+}
+
+@supports (color: light-dark(#000, #fff)) {
+  .mpv-content pre code {
+    --_hl-keyword: light-dark(#cf222e, #ff7b72);
+    --_hl-title: light-dark(#8250df, #d2a8ff);
+    --_hl-constant: light-dark(#0550ae, #79c0ff);
+    --_hl-string: light-dark(#0a3069, #a5d6ff);
+    --_hl-builtin: light-dark(#953800, #ffa657);
+    --_hl-comment: light-dark(#6e7781, #8b949e);
+    --_hl-tag: light-dark(#116329, #7ee787);
+    --_hl-added: light-dark(#dafbe1, #033a16);
+    --_hl-removed: light-dark(#ffebe9, #67060c);
+    --_hl-removed-text: light-dark(#82071e, #ffdcd7);
+  }
+}
+
+.mpv-content pre .hljs-keyword,
+.mpv-content pre .hljs-doctag,
+.mpv-content pre .hljs-template-tag,
+.mpv-content pre .hljs-template-variable,
+.mpv-content pre .hljs-type,
+.mpv-content pre .hljs-variable.language_ {
+  color: var(--_hl-keyword);
+}
+
+.mpv-content pre .hljs-title,
+.mpv-content pre .hljs-title.class_,
+.mpv-content pre .hljs-title.function_ {
+  color: var(--_hl-title);
+}
+
+.mpv-content pre .hljs-attr,
+.mpv-content pre .hljs-attribute,
+.mpv-content pre .hljs-literal,
+.mpv-content pre .hljs-meta,
+.mpv-content pre .hljs-number,
+.mpv-content pre .hljs-operator,
+.mpv-content pre .hljs-variable,
+.mpv-content pre .hljs-selector-attr,
+.mpv-content pre .hljs-selector-class,
+.mpv-content pre .hljs-selector-id,
+.mpv-content pre .hljs-property {
+  color: var(--_hl-constant);
+}
+
+.mpv-content pre .hljs-string,
+.mpv-content pre .hljs-regexp,
+.mpv-content pre .hljs-meta .hljs-string {
+  color: var(--_hl-string);
+}
+
+.mpv-content pre .hljs-built_in,
+.mpv-content pre .hljs-symbol,
+.mpv-content pre .hljs-bullet {
+  color: var(--_hl-builtin);
+}
+
+.mpv-content pre .hljs-comment,
+.mpv-content pre .hljs-code,
+.mpv-content pre .hljs-formula {
+  color: var(--_hl-comment);
+  font-style: italic;
+}
+
+.mpv-content pre .hljs-name,
+.mpv-content pre .hljs-quote,
+.mpv-content pre .hljs-selector-tag,
+.mpv-content pre .hljs-selector-pseudo {
+  color: var(--_hl-tag);
+}
+
+.mpv-content pre .hljs-section {
+  color: var(--_hl-constant);
+  font-weight: 700;
+}
+
+.mpv-content pre .hljs-emphasis {
+  font-style: italic;
+}
+
+.mpv-content pre .hljs-strong {
+  font-weight: 700;
+}
+
+.mpv-content pre .hljs-addition {
+  color: var(--_hl-tag);
+  background: var(--_hl-added);
+}
+
+.mpv-content pre .hljs-deletion {
+  color: var(--_hl-removed-text);
+  background: var(--_hl-removed);
+}
+
 .mpv-content table {
   border-collapse: collapse;
 }
