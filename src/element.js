@@ -11,7 +11,7 @@ import { DEFAULT_LOCALE, findLocale, resolveTexts } from './texts.js';
 export const TAG = 'md-pages-viewer';
 
 // Every option: a property of the element, and of `new MdPagesViewer` (viewer.js).
-export const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts', 'feedback', 'printButton', 'markdownButton', 'searchMark', 'codeCopyButton', 'searchSrc', 'backToTopButton'];
+export const OPTION_KEYS = ['pages', 'currentId', 'baseUrl', 'imageResolver', 'fetch', 'urlParam', 'styles', 'locale', 'texts', 'feedback', 'printButton', 'markdownButton', 'searchMark', 'codeCopyButton', 'searchSrc', 'backToTopButton', 'arrowKeys'];
 const ATTRIBUTES = {
   pages: 'pages',
   'current-id': 'currentId',
@@ -25,6 +25,7 @@ const ATTRIBUTES = {
   'code-copy-button': 'codeCopyButton',
   'search-src': 'searchSrc',
   'back-to-top-button': 'backToTopButton',
+  'arrow-keys': 'arrowKeys',
 };
 
 // How the words of a chosen search result are marked in the body (searchMark, spec 5.4).
@@ -434,12 +435,26 @@ function sharedStyleSheet() {
   return styleSheet;
 }
 
+/** A text field, or inside one (where keys are typed, not ours). */
+const isTyping = (node) => node instanceof Element && (node.isContentEditable || node.closest('input, textarea, select, [contenteditable]') !== null);
+
+// Parts that use the arrow keys themselves (spec 5.4): ← and → are theirs.
+const ARROW_KEY_USERS = 'input, textarea, select, [contenteditable], video, audio, [role="slider"], [role="spinbutton"], [role="scrollbar"], [role="tab"], [role="tablist"], [role="menu"], [role="menubar"], [role="menuitem"], [role="menuitemcheckbox"], [role="menuitemradio"], [role="listbox"], [role="option"], [role="radiogroup"], [role="radio"], [role="combobox"], [role="grid"], [role="treegrid"], [role="tree"], [role="treeitem"], [role="toolbar"]';
+const usesArrowKeys = (node) => node instanceof Element && (node.isContentEditable || node.matches(ARROW_KEY_USERS));
+
+/** An element whose content scrolls sideways (where ← and → scroll it). */
+const scrollsSideways = (node) => {
+  if (!(node instanceof Element) || node.scrollWidth <= node.clientWidth) return false;
+  const { overflowX } = getComputedStyle(node);
+  return overflowX === 'auto' || overflowX === 'scroll';
+};
+
 export class MdPagesViewerElement extends HTMLElement {
   static get observedAttributes() {
     return Object.keys(ATTRIBUTES);
   }
 
-  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined, feedback: undefined, printButton: undefined, markdownButton: undefined, searchMark: undefined, codeCopyButton: undefined, searchSrc: undefined, backToTopButton: undefined };
+  #options = { pages: undefined, currentId: undefined, baseUrl: undefined, imageResolver: undefined, fetch: undefined, urlParam: undefined, styles: undefined, locale: undefined, texts: undefined, feedback: undefined, printButton: undefined, markdownButton: undefined, searchMark: undefined, codeCopyButton: undefined, searchSrc: undefined, backToTopButton: undefined, arrowKeys: undefined };
   // The words on our parts (spec 5.10): made from locale and texts when first
   // needed, and again after either changes.
   #words = null;
@@ -589,17 +604,54 @@ export class MdPagesViewerElement extends HTMLElement {
   // somewhere, another viewer took it, or the search box cannot take focus
   // (not shown, no pages). The key is kept from the page only when it moved.
   #onDocumentKey = (event) => {
+    if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
+      this.#onArrowKey(event);
+      return;
+    }
     if (event.key !== '/' || event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.isComposing) return;
-    const typing = (node) => node instanceof Element && (node.isContentEditable || node.closest('input, textarea, select, [contenteditable]') !== null);
     // Inside a closed shadow root the event shows only its host: our own
     // focus is read from our root, and a custom element may hold an input.
     const target = event.composedPath()[0];
-    if (typing(target) || typing(this.shadowRoot.activeElement)) return;
+    if (isTyping(target) || isTyping(this.shadowRoot.activeElement)) return;
     if (target instanceof Element && target !== this && target.localName.includes('-')) return;
     this.#ui.search.focus();
     if (this.shadowRoot.activeElement !== this.#ui.search) return;
     event.preventDefault();
   };
+  /**
+   * ← and → go to the previous and next page, as the links at the end of the
+   * body do (spec 5.4), unless arrowKeys is off. Only while the focus is in
+   * this viewer, or on nothing in particular (the page's body) with the
+   * viewer in view, so the host's own controls keep their keys. Never with a
+   * modifier (Alt+← is the browser's back), in a text field or in what uses
+   * the arrows itself (a slider, tabs, a menu...), in what scrolls sideways
+   * (a wide table or code) nor while an image is enlarged.
+   */
+  #onArrowKey(event) {
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.shiftKey || event.isComposing) return;
+    if (!this.#shownUnlessOff('arrowKeys') || this.#ui.zoom.open || this.#ui.pager.hidden) return;
+    const own = this.shadowRoot.activeElement;
+    if (own === null) {
+      const active = document.activeElement;
+      if (active !== null && active !== document.body && active !== document.documentElement) return;
+      if (!this.#inView()) return;
+    }
+    const path = event.composedPath();
+    if (isTyping(own) || path.some((node) => usesArrowKeys(node) || scrollsSideways(node))) return;
+    const link = this.#ui.pager.querySelector(event.key === 'ArrowLeft' ? '.mpv-pager-previous' : '.mpv-pager-next');
+    if (!link) return;
+    event.preventDefault();
+    this.#navigate(link.dataset.mpvNav, '');
+    this.#closeSidebar();
+  }
+
+  /** Shown and at least partly in the window. */
+  #inView() {
+    if (typeof this.checkVisibility === 'function' && !this.checkVisibility()) return false;
+    const rect = this.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.right > 0 && rect.top < window.innerHeight && rect.left < window.innerWidth;
+  }
+
   // While an image is enlarged, Esc closes it, wherever the focus is, and
   // nothing else: the host's own Esc (closing a help panel, say) sees the
   // key as taken. Listened to on the window, in the capture phase.
@@ -750,6 +802,8 @@ export class MdPagesViewerElement extends HTMLElement {
   set searchSrc(value) { this.#setOption('searchSrc', value); }
   get backToTopButton() { return this.#options.backToTopButton; }
   set backToTopButton(value) { this.#setOption('backToTopButton', value); }
+  get arrowKeys() { return this.#options.arrowKeys; }
+  set arrowKeys(value) { this.#setOption('arrowKeys', value); }
   get styles() { return this.#options.styles; }
   set styles(value) {
     // Only the look changes, so it applies at once without drawing again.
@@ -891,6 +945,7 @@ export class MdPagesViewerElement extends HTMLElement {
     if (changed.has('searchMark')) this.#onSearchMarkChanged();
     if (changed.has('searchSrc')) this.#onSearchSrcChanged();
     if (changed.has('backToTopButton')) this.#updateTopButton();
+    if (changed.has('arrowKeys')) this.#renderPagerKeys();
 
     if (pages === undefined || pages === null) {
       this.#reset();
@@ -1482,13 +1537,24 @@ export class MdPagesViewerElement extends HTMLElement {
         : h(
             'a',
             { class: `mpv-pager-link mpv-pager-${which}`, part: `pager-link ${which}`, href: pageUrl(location.href, name, id), 'data-mpv-nav': id },
-            h('span', { class: 'mpv-pager-label' }, label),
+            h('span', { class: 'mpv-pager-head' }, h('span', { class: 'mpv-pager-label' }, label), h('kbd', { class: 'mpv-pager-key', part: 'pager-key', 'aria-hidden': 'true' }, which === 'previous' ? '←' : '→')),
             h('span', { class: 'mpv-pager-title' }, place(id)),
           );
     const previous = at > 0 ? order[at - 1] : undefined;
     const next = at >= 0 && at < order.length - 1 ? order[at + 1] : undefined;
     pager.replaceChildren(link(previous, 'previous', this.#text('previous')), link(next, 'next', this.#text('next')));
     pager.hidden = previous === undefined && next === undefined;
+    this.#renderPagerKeys();
+  }
+
+  /** The marks of the keys ← and → beside "Previous" and "Next" (spec 5.4): shown unless arrowKeys is off. */
+  #renderPagerKeys() {
+    const on = this.#shownUnlessOff('arrowKeys');
+    for (const key of this.#ui.pager.querySelectorAll('.mpv-pager-key')) key.hidden = !on;
+    for (const link of this.#ui.pager.querySelectorAll('.mpv-pager-link')) {
+      if (on) link.setAttribute('aria-keyshortcuts', link.classList.contains('mpv-pager-previous') ? 'ArrowLeft' : 'ArrowRight');
+      else link.removeAttribute('aria-keyshortcuts');
+    }
   }
 
   /**

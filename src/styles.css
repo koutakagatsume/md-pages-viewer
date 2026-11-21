@@ -1737,9 +1737,40 @@
   border-color: var(--_accent);
 }
 
+.mpv-pager-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+}
+
+.mpv-pager-next .mpv-pager-head {
+  justify-content: flex-end;
+}
+
 .mpv-pager-label {
   color: var(--_muted);
   font-size: 0.8em;
+}
+
+/* The key that also goes there (arrowKeys, spec 5.4). */
+.mpv-pager-key {
+  min-width: 1.6em;
+  padding: 0 0.35em;
+  border: 1px solid var(--_border);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  color: var(--_muted);
+  font: inherit;
+  font-size: 0.65em;
+  line-height: 1.4;
+  text-align: center;
+}
+
+/* No keys to press on a touch screen. */
+@media (hover: none) and (pointer: coarse) {
+  .mpv-pager-key {
+    display: none;
+  }
 }
 
 .mpv-pager-title {

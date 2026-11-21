@@ -784,19 +784,19 @@ test('[表示/前後のページ] 本文や子ページの一覧の最後に、�
 
   // 最初のページ：次だけ。下の階層も順に入る
   await expect(previous).toHaveCount(0);
-  await expect(next).toHaveText('次へはじめに › ログイン方法');
+  await expect(next).toHaveText('次へ→はじめに › ログイン方法');
   expect((await box(pager)).top).toBeGreaterThan((await box(content(viewer))).bottom - 1);
 
   await next.click();
   await expect(h1(viewer)).toHaveText('ログイン方法');
-  await expect(previous).toHaveText('前へはじめに');
-  await expect(next).toHaveText('次へはじめに › ログイン方法 › 深い階層');
+  await expect(previous).toHaveText('前へ←はじめに');
+  await expect(next).toHaveText('次へ→はじめに › ログイン方法 › 深い階層');
   expect((await urlState(page)).param).toBe('login');
 
   // 最後のページ：前だけ
   await sidebarLink(viewer, 'FAQ').click();
   await expect(h1(viewer)).toHaveText('FAQ');
-  await expect(previous).toHaveText('前へはじめに › ログイン方法 › 深い階層');
+  await expect(previous).toHaveText('前へ←はじめに › ログイン方法 › 深い階層');
   await expect(next).toHaveCount(0);
   await previous.click();
   await expect(h1(viewer)).toHaveText('深い階層');
@@ -805,12 +805,12 @@ test('[表示/前後のページ] 本文や子ページの一覧の最後に、�
   await viewer.evaluate((el) => (el.pages = [...el.pages, { id: 'group', parentId: null, title: 'まとめ', order: 3 }, { id: 'child', parentId: 'group', title: '子', md: '# 子' }]));
   await sidebarLink(viewer, 'まとめ').click();
   await expect(part(viewer, 'child-list')).toBeVisible();
-  await expect(previous).toHaveText('前へFAQ');
-  await expect(next).toHaveText('次へまとめ › 子');
+  await expect(previous).toHaveText('前へ←FAQ');
+  await expect(next).toHaveText('次へ→まとめ › 子');
   expect((await box(pager)).top).toBeGreaterThan((await box(part(viewer, 'child-list'))).bottom - 1);
   await next.click();
   await expect(h1(viewer)).toHaveText('子');
-  await expect(previous).toHaveText('前へまとめ');
+  await expect(previous).toHaveText('前へ←まとめ');
   await previous.click();
   await expect(part(viewer, 'child-list')).toBeVisible();
   await previous.click();
