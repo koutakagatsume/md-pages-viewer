@@ -1,5 +1,5 @@
 // 仕様書 9章「表示」の「印刷・PDF・Markdown」の行のテスト（本書 5.4・6・5.10）。
-// 印刷するときは本文だけを最後まで出す。ツールバーの右の PDF のボタンはそのページだけを新しいタブに出して印刷の画面を開き、
+// 印刷するときは本文だけを最後まで出す。ツールバーの右の PDF のボタンのメニューの「このページ」はそのページだけを新しいタブに出して印刷の画面を開き、
 // Markdown のボタンはそのページの Markdown をダウンロードする。
 
 import { test, expect } from '@playwright/test';
@@ -25,6 +25,11 @@ const PAGES = [
 ];
 
 const part = (viewer, name) => viewer.locator(`[part~="${name}"]`);
+/** PDF のボタンのメニューを開いて「このページ」を選ぶ。 */
+const printThisPage = async (viewer) => {
+  await part(viewer, 'print-button').click();
+  await part(viewer, 'print-menu-item').filter({ hasText: 'このページ' }).click();
+};
 /** 部品が見えているか（display が none でなく、大きさがある） */
 const shown = (viewer, selector) =>
   viewer.evaluate((el, selector) => {
@@ -71,14 +76,14 @@ test('[表示/印刷] 印刷するときは、今の場所と本文（最終更�
   expect(Math.round(await viewer.evaluate((el) => el.getBoundingClientRect().height))).toBe(400);
 });
 
-test('[表示/印刷] ツールバーの右の PDF・Markdown のボタンは、本文のあるページだけに出る（子ページ一覧・読み込めないときは出ない）。名前は locale の言語で、texts で変えられる', async ({ page }) => {
+test('[表示/印刷] ツールバーの右の PDF のボタンは本文のあるページと子ページ一覧のページに、Markdown のボタンは本文のあるページだけに出る（読み込めないときはどちらも出ない）。名前は locale の言語で、texts で変えられる', async ({ page }) => {
   await page.goto(BLANK);
   const viewer = await mount(page, { options: { pages: [...PAGES, { id: 'broken', parentId: null, title: '壊れた', src: '/no-such-file.md' }], currentId: 'a', urlParam: false } });
   await expect(content(viewer).locator('h1')).toHaveText('A');
   await expect(part(viewer, 'print-button')).toBeVisible();
   await expect(part(viewer, 'markdown-button')).toBeVisible();
-  await expect(part(viewer, 'print-button')).toHaveAttribute('aria-label', 'このページを PDF に保存・印刷する');
-  await expect(part(viewer, 'print-button')).toHaveAttribute('title', 'このページを PDF に保存・印刷する');
+  await expect(part(viewer, 'print-button')).toHaveAttribute('aria-label', 'PDF に保存・印刷する');
+  await expect(part(viewer, 'print-button')).toHaveAttribute('title', 'PDF に保存・印刷する');
   await expect(part(viewer, 'markdown-button')).toHaveAttribute('aria-label', 'このページの Markdown をダウンロード');
   // 検索欄の右、目次の開閉ボタンの左
   expect(await viewer.evaluate((el) => [...el.shadowRoot.querySelector('.mpv-toolbar').children].filter((n) => !n.hidden).map((n) => n.getAttribute('part')))).toEqual([
@@ -92,7 +97,7 @@ test('[表示/印刷] ツールバーの右の PDF・Markdown のボタンは、
 
   await viewer.evaluate((el) => (el.currentId = 'cat'));
   await expect(part(viewer, 'child-link')).toHaveCount(2);
-  await expect(part(viewer, 'print-button')).toBeHidden();
+  await expect(part(viewer, 'print-button')).toBeVisible();
   await expect(part(viewer, 'markdown-button')).toBeHidden();
 
   await viewer.evaluate((el) => (el.currentId = 'broken'));
@@ -103,9 +108,9 @@ test('[表示/印刷] ツールバーの右の PDF・Markdown のボタンは、
     el.currentId = 'a';
     el.locale = 'en';
   });
-  await expect(part(viewer, 'print-button')).toHaveAttribute('aria-label', 'Save this page as PDF or print it');
+  await expect(part(viewer, 'print-button')).toHaveAttribute('aria-label', 'Save as PDF or print');
   await expect(part(viewer, 'markdown-button')).toHaveAttribute('title', 'Download this page as Markdown');
-  for (const [locale, label] of [['zh-CN', '将此页另存为 PDF 或打印'], ['zh-TW', '將此頁另存為 PDF 或列印'], ['ko', '이 페이지를 PDF로 저장하거나 인쇄']]) {
+  for (const [locale, label] of [['zh-CN', '另存为 PDF 或打印'], ['zh-TW', '另存為 PDF 或列印'], ['ko', 'PDF로 저장하거나 인쇄']]) {
     await viewer.evaluate((el, locale) => (el.locale = locale), locale);
     await expect(part(viewer, 'print-button'), locale).toHaveAttribute('aria-label', label);
   }
@@ -205,7 +210,7 @@ test('[表示/印刷] Markdown のボタンで、そのページの Markdown（m
   expect(readFileSync(saved2, 'utf8')).toBe(expected);
 });
 
-test('[表示/印刷] PDF のボタンで、そのページだけを新しいタブに出し（今の場所と本文。組み込み先の styles とフォントも引き継ぐ）、印刷の画面を開く', async ({ page, context }) => {
+test('[表示/印刷] PDF のボタンの「このページ」で、そのページだけを新しいタブに出し（今の場所と本文。組み込み先の styles とフォントも引き継ぐ）、印刷の画面を開く', async ({ page, context }) => {
   await page.goto(BLANK);
   await page.evaluate(() => (document.documentElement.style.fontFamily = 'Georgia, serif'));
   const viewer = await mount(page, { options: { pages: PAGES, currentId: 'a', styles: '[part~="content"] h1 { letter-spacing: 3px; }' } });
@@ -215,7 +220,7 @@ test('[表示/印刷] PDF のボタンで、そのページだけを新しいタ
     window.__printed = 0;
     window.print = () => (window.__printed += 1);
   });
-  const [tab] = await Promise.all([context.waitForEvent('page'), part(viewer, 'print-button').click()]);
+  const [tab] = await Promise.all([context.waitForEvent('page'), printThisPage(viewer)]);
   await expect.poll(() => tab.evaluate(() => window.opener !== null && document.title)).toBe('A: 手順/説明');
   const state = await tab.evaluate(() => {
     const frame = document.querySelector('.mpv');
@@ -255,6 +260,6 @@ test('[表示/印刷] 新しいタブを開けない（ポップアップが止�
   });
   const viewer = await mount(page, { options: { pages: PAGES, currentId: 'a', urlParam: false } });
   await expect(content(viewer).locator('h1')).toHaveText('A');
-  await part(viewer, 'print-button').click();
+  await printThisPage(viewer);
   expect(await page.evaluate(() => window.__printed)).toBe(1);
 });

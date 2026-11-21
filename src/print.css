@@ -25,6 +25,7 @@
 .mpv-code-copy,
 .mpv-top-wrap,
 .mpv-details-buttons,
+.mpv-print-menu,
 .mpv-zoom {
   display: none !important;
 }
@@ -103,4 +104,75 @@
   color: #4b5563;
   font-size: 0.85em;
   overflow-wrap: anywhere;
+}
+
+/* Pages printed together (the PDF button's menu, spec 5.4): a cover with
+   their contents, then each page from the top of a sheet, where it is
+   above it. */
+.mpv-book-wait {
+  color: #4b5563;
+}
+
+.mpv-book-title {
+  margin: 0 0 0.3em;
+  font-size: 2em;
+  line-height: 1.3;
+}
+
+.mpv-book-meta {
+  margin: 0 0 2.5em;
+  color: #4b5563;
+}
+
+.mpv-book-meta span + span::before {
+  content: ' · ';
+}
+
+.mpv-book-contents-title {
+  margin: 0 0 0.75em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid #9ca3af;
+  font-size: 1.1em;
+}
+
+.mpv-book-contents,
+.mpv-book-contents ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mpv-book-contents ol {
+  padding-left: 1.5em;
+}
+
+.mpv-book-contents li {
+  margin: 0.35em 0;
+}
+
+.mpv-book-contents a {
+  color: inherit;
+  text-decoration: none;
+}
+
+.mpv-book-group {
+  font-weight: 700;
+}
+
+.mpv-book-page {
+  break-before: page;
+}
+
+.mpv-book-path {
+  margin: 0;
+  padding-bottom: 8px;
+  border-bottom: 1px solid #9ca3af;
+  color: #4b5563;
+  font-size: 0.85em;
+}
+
+@media screen {
+  .mpv-book-page {
+    margin-top: 48px;
+  }
 }

@@ -475,6 +475,19 @@ function loadMermaid(src) {
 // every viewer on the page.
 let mermaidTurn = Promise.resolve();
 let diagramCount = 0;
+/** Prints a window once its images have arrived (each at most a few seconds). */
+function printWhenLoaded(win, doc) {
+  const loading = [...doc.images].filter((img) => !img.complete).map((img) => new Promise((done) => {
+    img.addEventListener('load', done, { once: true });
+    img.addEventListener('error', done, { once: true });
+    setTimeout(done, 5000);
+  }));
+  Promise.all(loading).then(() => {
+    win.focus();
+    win.print();
+  });
+}
+
 function drawWithMermaid(mermaid, settings, text) {
   const id = `mpv-diagram-${++diagramCount}`;
   const turn = mermaidTurn.then(() => {
@@ -596,6 +609,10 @@ export class MdPagesViewerElement extends HTMLElement {
   // Whether the body shown has the PDF and Markdown buttons (a page's body,
   // not a child index or a status); each is shown unless the host turned it off.
   #toolsShown = false;
+  // A child index is shown (the PDF button prints the pages under it, spec 5.4).
+  #indexShown = false;
+  // The PDF button's menu while it is open.
+  #printMenu = null;
   // The words of the search result chosen (spec 5.4): marked in the body of
   // the page it opened while that page is shown. index: the current mark
   // ("nav"), -1 until the marks are first made.
@@ -638,6 +655,8 @@ export class MdPagesViewerElement extends HTMLElement {
   // The narrow-screen sidebar closes on a click anywhere outside it,
   // including the host page (spec 6); so do the search results.
   #onDocumentClick = (event) => {
+    // A click outside the PDF button's menu closes it.
+    if (this.#printMenu && !event.composedPath().some((node) => node === this.#printMenu || node === this.#ui.printButton)) this.#closePrintMenu();
     if (!this.#searchClicks.has(event)) this.#hideSearchResults();
     if (!this.#ui.frame.hasAttribute('data-sidebar-open')) return;
     if (this.#insideClicks.has(event)) return;
@@ -1420,33 +1439,38 @@ export class MdPagesViewerElement extends HTMLElement {
     };
   }
 
+  /** A page's Markdown as the viewer shows it (spec 5.4): images and links resolved, sanitized. */
+  #renderPageMarkdown(page, markdown, options) {
+    return renderMarkdown(markdown, {
+      image: (path) => {
+        try {
+          return resolveImage(path, page, options);
+        } catch (error) {
+          // Loading the raw path would resolve it against the host page,
+          // which is neither imageResolver's answer nor spec 5.3's rule.
+          warn(`imageResolver failed for "${path}": ${error.message}`);
+          return '';
+        }
+      },
+      link: (href) => classifyLink(href, page, this.#model, options),
+      pageHref: (id, hash) => pageUrl(location.href, options.paramName, id, hash),
+    }, {
+      calloutLabels: {
+        note: this.#text('calloutNote'),
+        tip: this.#text('calloutTip'),
+        important: this.#text('calloutImportant'),
+        warning: this.#text('calloutWarning'),
+        caution: this.#text('calloutCaution'),
+      },
+      highlight: this.#shownUnlessOff('codeHighlight'),
+    });
+  }
+
   #renderBody(page, markdown, how) {
     const options = this.#linkOptions();
     let fragment;
     try {
-      fragment = renderMarkdown(markdown, {
-        image: (path) => {
-          try {
-            return resolveImage(path, page, options);
-          } catch (error) {
-            // Loading the raw path would resolve it against the host page,
-            // which is neither imageResolver's answer nor spec 5.3's rule.
-            warn(`imageResolver failed for "${path}": ${error.message}`);
-            return '';
-          }
-        },
-        link: (href) => classifyLink(href, page, this.#model, options),
-        pageHref: (id, hash) => pageUrl(location.href, options.paramName, id, hash),
-      }, {
-        calloutLabels: {
-          note: this.#text('calloutNote'),
-          tip: this.#text('calloutTip'),
-          important: this.#text('calloutImportant'),
-          warning: this.#text('calloutWarning'),
-          caution: this.#text('calloutCaution'),
-        },
-        highlight: this.#shownUnlessOff('codeHighlight'),
-      });
+      fragment = this.#renderPageMarkdown(page, markdown, options);
     } catch (error) {
       // Never leave the previous page's body under the new sidebar/breadcrumb.
       warn(`Could not render page "${page.id}": ${error.message}`);
@@ -1517,6 +1541,8 @@ export class MdPagesViewerElement extends HTMLElement {
     );
     this.#markChildIndex(true);
     this.#putBody(fragment, how);
+    this.#indexShown = true;
+    this.#renderTools();
     this.#renderPager(page);
   }
 
@@ -1677,6 +1703,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#feedbackPage = null;
     this.#ui.feedback.hidden = true;
     this.#toolsShown = false;
+    this.#indexShown = false;
     this.#renderTools();
     this.#hideHitBar();
     this.#ui.bodyStatus.hidden = true;
@@ -1965,15 +1992,21 @@ export class MdPagesViewerElement extends HTMLElement {
    * date and time is the reader's day. Not on a page without it.
    */
   #addUpdated(page) {
+    const line = this.#updatedLine(page);
+    if (line) this.#ui.content.append(line);
+  }
+
+  /** The line of a page's last update, or null (none, or a moment no calendar can write). */
+  #updatedLine(page) {
     const updated = page.updatedAt;
-    if (!updated) return;
+    if (!updated) return null;
     let date;
     try {
       date = new Intl.DateTimeFormat(this.#dateLocale(), { dateStyle: 'long', ...(updated.dateOnly ? { timeZone: 'UTC' } : {}) }).format(updated.time);
     } catch {
-      return; // a moment no calendar can write (far out of range)
+      return null; // far out of range
     }
-    this.#ui.content.append(h('p', { class: 'mpv-updated', part: 'updated' }, h('time', { datetime: updated.iso }, this.#text('updated', date))));
+    return h('p', { class: 'mpv-updated', part: 'updated' }, h('time', { datetime: updated.iso }, this.#text('updated', date)));
   }
 
   /** The built-in locale the words are in (texts.js), for writing dates the same way. */
@@ -1989,7 +2022,17 @@ export class MdPagesViewerElement extends HTMLElement {
    * turned it off (the option false, or the attribute "false").
    */
   #renderTools() {
-    this.#ui.printButton.hidden = !(this.#toolsShown && this.#shownUnlessOff('printButton'));
+    // The PDF button also over a child index, for printing the pages under it (spec 5.4).
+    const printable = (this.#toolsShown || this.#indexShown) && this.#shownUnlessOff('printButton');
+    this.#ui.printButton.hidden = !printable;
+    this.#closePrintMenu();
+    if (printable && this.#printChoices().length > 1) {
+      this.#ui.printButton.setAttribute('aria-haspopup', 'menu');
+      this.#ui.printButton.setAttribute('aria-expanded', 'false');
+    } else {
+      this.#ui.printButton.removeAttribute('aria-haspopup');
+      this.#ui.printButton.removeAttribute('aria-expanded');
+    }
     this.#ui.markdownButton.hidden = !(this.#toolsShown && this.#shownUnlessOff('markdownButton'));
   }
 
@@ -2006,28 +2049,167 @@ export class MdPagesViewerElement extends HTMLElement {
   }
 
   /**
-   * The PDF button: the page alone in a new tab, as it is printed (where it
-   * is, then its body; print.css), and the browser's print dialog, where it
-   * can also be saved as PDF. Where the new tab is not allowed (a blocked
+   * The PDF button (spec 5.4): with more than one thing to print, a menu of
+   * them (this page, the pages under its parent or itself, all pages);
+   * otherwise that one at once.
+   */
+  #onPrintButton() {
+    if (this.#printMenu) {
+      this.#closePrintMenu();
+      return;
+    }
+    const choices = this.#printChoices();
+    if (choices.length === 1) choices[0].run();
+    else if (choices.length > 1) this.#openPrintMenu(choices);
+  }
+
+  /**
+   * What the PDF button can print, in the order of its menu: this page (with
+   * a body), the pages under it (with child pages) or under its parent, and
+   * all pages. Pages without a body are left out of the counts; a set the
+   * same as all pages is not offered twice.
+   * @returns {{label: string, count?: number, run: () => void}[]}
+   */
+  #printChoices() {
+    const page = this.#shownPage();
+    if (!page || !this.#model) return [];
+    const hasBody = (id) => {
+      const p = this.#model.get(id);
+      return p.md !== null || p.src !== null;
+    };
+    const choices = [];
+    if (this.#toolsShown) choices.push({ label: this.#text('printThisPage'), run: () => this.#printPage() });
+    const all = this.#pageOrder();
+    const allCount = all.filter(hasBody).length;
+    const groupId = this.#model.childrenOf(page.id).length > 0 ? page.id : page.parentId;
+    if (groupId !== null && groupId !== undefined) {
+      const ids = this.#pagesUnder(groupId);
+      const count = ids.filter(hasBody).length;
+      const group = this.#model.get(groupId);
+      if (count > 0 && ids.length < all.length) choices.push({ label: this.#text('printSection', group.title), count, run: () => this.#printBook('section', ids, group.title) });
+    }
+    if (allCount > 0 && (allCount > 1 || !this.#toolsShown)) choices.push({ label: this.#text('printAll'), count: allCount, run: () => this.#printBook('all', all, this.#text('printAll')) });
+    return choices;
+  }
+
+  /** A page and all the pages under it, in the order of the sidebar. */
+  #pagesUnder(id) {
+    const ids = [id];
+    const visit = (parent) => {
+      for (const child of this.#model.childrenOf(parent)) {
+        ids.push(child);
+        visit(child);
+      }
+    };
+    visit(id);
+    return ids;
+  }
+
+  /** The menu under the PDF button: ↑ ↓ move, Esc closes it, a choice prints. */
+  #openPrintMenu(choices) {
+    const button = this.#ui.printButton;
+    const menu = h('div', { class: 'mpv-print-menu', part: 'print-menu', role: 'menu', 'aria-label': this.#text('printMenu') });
+    for (const choice of choices) {
+      const item = h('button', { type: 'button', class: 'mpv-print-item', part: 'print-menu-item', role: 'menuitem', tabindex: '-1' }, h('span', { class: 'mpv-print-label' }, choice.label));
+      if (choice.count !== undefined) item.append(h('span', { class: 'mpv-print-count' }, this.#text('printPageCount', choice.count)));
+      item.addEventListener('click', () => {
+        this.#closePrintMenu({ focus: true });
+        choice.run();
+      });
+      menu.append(item);
+    }
+    menu.addEventListener('keydown', (event) => {
+      const items = [...menu.querySelectorAll('.mpv-print-item')];
+      const at = items.indexOf(this.shadowRoot.activeElement);
+      const move = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: items.length - 1 }[event.key];
+      if (move !== undefined) {
+        event.preventDefault();
+        items[(move + items.length) % items.length].focus();
+      } else if (event.key === 'Escape') {
+        event.preventDefault();
+        event.stopPropagation();
+        this.#closePrintMenu({ focus: true });
+      } else if (event.key === 'Tab') {
+        this.#closePrintMenu();
+      }
+    });
+    // Under the button, its right edge at the button's (the toolbar holds it).
+    const toolbar = this.#ui.toolbar;
+    const bar = toolbar.getBoundingClientRect();
+    const box = button.getBoundingClientRect();
+    menu.style.setProperty('top', `${box.bottom - bar.top + 4}px`);
+    menu.style.setProperty('right', `${Math.max(0, bar.right - box.right)}px`);
+    toolbar.append(menu);
+    this.#printMenu = menu;
+    button.setAttribute('aria-expanded', 'true');
+    menu.querySelector('.mpv-print-item').focus();
+  }
+
+  #closePrintMenu({ focus = false } = {}) {
+    if (!this.#printMenu) return;
+    this.#printMenu.remove();
+    this.#printMenu = null;
+    this.#ui.printButton.setAttribute('aria-expanded', 'false');
+    if (focus) this.#ui.printButton.focus();
+  }
+
+  /**
+   * "This page": the page alone in a new tab, as it is printed (where it is,
+   * then its body; print.css), and the browser's print dialog, where it can
+   * also be saved as PDF. Where the new tab is not allowed (a blocked
    * pop-up), this page is printed instead, the viewer showing just the body.
    */
   #printPage() {
     const page = this.#shownPage();
     if (!page) return;
     // The host may print its own way instead (spec 5.11).
-    if (!this.#emit('mpv-print', { id: page.id }, { cancelable: true })) return;
+    if (!this.#emit('mpv-print', { id: page.id, scope: 'page', pageIds: [page.id] }, { cancelable: true })) return;
+    const target = this.#openPrintWindow(page.title);
+    if (!target) {
+      window.print();
+      return;
+    }
+    const { win, doc, frame } = target;
+    const toolbar = doc.createElement('div');
+    toolbar.className = 'mpv-toolbar';
+    toolbar.setAttribute('part', 'toolbar');
+    toolbar.append(doc.importNode(this.#ui.breadcrumb, true));
+    const content = doc.importNode(this.#ui.content, true);
+    // Every <details> printed open, without the buttons that open them all (spec 5.4).
+    for (const details of content.querySelectorAll('details')) {
+      details.open = true;
+      details.style.removeProperty('overflow');
+    }
+    for (const buttons of content.querySelectorAll('.mpv-details-buttons')) buttons.remove();
+    frame.append(toolbar, content);
+    printWhenLoaded(win, doc);
+  }
+
+  /**
+   * A new tab to print in (or, with `frame`, a hidden frame of this page,
+   * where a new tab is not allowed), with our print stylesheet and a frame
+   * of the viewer as the host styled it. Null when there is neither.
+   * @returns {{win: Window, doc: Document, frame: HTMLElement} | null}
+   */
+  #openPrintWindow(title, { frame: inFrame = false } = {}) {
     let win = null;
     try {
       win = window.open('', '_blank');
     } catch {
       win = null;
     }
-    if (!win) {
-      window.print();
-      return;
+    if (!win && inFrame) {
+      const iframe = document.createElement('iframe');
+      iframe.setAttribute('aria-hidden', 'true');
+      iframe.tabIndex = -1;
+      for (const [name, value] of [['position', 'fixed'], ['left', '-10000px'], ['top', '0'], ['width', '800px'], ['height', '600px'], ['border', '0']]) iframe.style.setProperty(name, value);
+      document.body.append(iframe);
+      win = iframe.contentWindow;
+      if (win) win.addEventListener('afterprint', () => setTimeout(() => iframe.remove(), 0));
     }
+    if (!win) return null;
     const doc = win.document;
-    doc.title = page.title;
+    doc.title = title;
     const lang = this.#ui.layout.getAttribute('lang');
     if (lang) doc.documentElement.lang = lang;
     // A constructed stylesheet of that window (not blocked by a CSP without
@@ -2059,30 +2241,168 @@ export class MdPagesViewerElement extends HTMLElement {
     frame.style.setProperty('max-width', '760px');
     frame.style.setProperty('margin', '0 auto');
     frame.style.setProperty('padding', '24px 16px');
-    const toolbar = doc.createElement('div');
-    toolbar.className = 'mpv-toolbar';
-    toolbar.setAttribute('part', 'toolbar');
-    toolbar.append(doc.importNode(this.#ui.breadcrumb, true));
-    const content = doc.importNode(this.#ui.content, true);
-    // Every <details> printed open, without the buttons that open them all (spec 5.4).
-    for (const details of content.querySelectorAll('details')) {
-      details.open = true;
-      details.style.removeProperty('overflow');
-    }
-    for (const buttons of content.querySelectorAll('.mpv-details-buttons')) buttons.remove();
-    frame.append(toolbar, content);
     doc.body.style.setProperty('margin', '0');
     doc.body.append(frame);
-    // Printed once the images have arrived (each at most a few seconds).
-    const loading = [...doc.images].filter((img) => !img.complete).map((img) => new Promise((done) => {
-      img.addEventListener('load', done, { once: true });
-      img.addEventListener('error', done, { once: true });
-      setTimeout(done, 5000);
-    }));
-    Promise.all(loading).then(() => {
-      win.focus();
-      win.print();
+    return { win, doc, frame };
+  }
+
+  /**
+   * Pages printed together (spec 5.4): in a new tab (a hidden frame where
+   * it is not allowed), a cover with their contents, then each page with a
+   * body from the top of a sheet, where it is above its body. The bodies of
+   * `src` pages are fetched first (four at a time); links between the pages
+   * printed go to them in the document. Then the browser's print dialog.
+   */
+  async #printBook(scope, ids, title) {
+    const model = this.#model;
+    const bodies = ids.filter((id) => {
+      const page = model.get(id);
+      return page.md !== null || page.src !== null;
     });
+    const shown = this.#shownPage();
+    if (!this.#emit('mpv-print', { id: shown ? shown.id : null, scope, pageIds: bodies }, { cancelable: true })) return;
+    const target = this.#openPrintWindow(title, { frame: true });
+    if (!target) return;
+    const { win, doc, frame } = target;
+    const wait = doc.createElement('p');
+    wait.className = 'mpv-book-wait';
+    frame.append(wait);
+    const texts = new Map();
+    let done = 0;
+    const progress = () => (wait.textContent = this.#text('printPreparing', { done, total: bodies.length }));
+    progress();
+    let next = 0;
+    const worker = async () => {
+      while (next < bodies.length) {
+        const page = model.get(bodies[next++]);
+        texts.set(page.id, await this.#bookMarkdown(page));
+        done += 1;
+        progress();
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(SEARCH_FETCH_PARALLEL, bodies.length) }, worker));
+    if (win.closed || model !== this.#model) return;
+
+    // Where each page printed is in the document.
+    const places = new Map(bodies.map((id, index) => [id, index]));
+    const options = this.#linkOptions();
+    const sections = [];
+    for (const id of bodies) sections.push(await this.#bookPage(model.get(id), texts.get(id), places, options));
+    if (win.closed) return;
+
+    const cover = h('section', { class: 'mpv-book-cover' }, h('h1', { class: 'mpv-book-title' }, title));
+    const meta = h('p', { class: 'mpv-book-meta' }, h('span', {}, this.#text('printPageCount', bodies.length)));
+    try {
+      meta.append(h('span', {}, new Intl.DateTimeFormat(this.#dateLocale(), { dateStyle: 'long' }).format(new Date())));
+    } catch {
+      // no date
+    }
+    cover.append(meta, h('h2', { class: 'mpv-book-contents-title' }, this.#text('printContents')));
+    // The contents: every page of the set, nested as in the sidebar; those
+    // without a body are the names of their groups.
+    const base = model.pathTo(ids[0]).length;
+    const lists = [h('ol', { class: 'mpv-book-contents' })];
+    for (const id of ids) {
+      const depth = model.pathTo(id).length - base;
+      while (lists.length > depth + 1) lists.pop();
+      while (lists.length < depth + 1) {
+        const parent = lists[lists.length - 1];
+        const list = h('ol', {});
+        (parent.lastElementChild || parent).append(list);
+        lists.push(list);
+      }
+      const page = model.get(id);
+      const item = places.has(id) ? h('li', {}, h('a', { href: `#mpv-book-${places.get(id)}` }, page.title)) : h('li', { class: 'mpv-book-group' }, page.title);
+      lists[lists.length - 1].append(item);
+    }
+    cover.append(lists[0]);
+    wait.remove();
+    frame.append(doc.importNode(cover, true), ...sections.map((section) => doc.importNode(section, true)));
+    printWhenLoaded(win, doc);
+  }
+
+  /** The Markdown of a page to print with others: fetched if it is not here (null if it cannot be). */
+  async #bookMarkdown(page) {
+    const here = this.#markdownOf(page);
+    if (here !== null) return here;
+    const generation = this.#cacheGeneration;
+    try {
+      const text = await this.#fetchBody(page, generation);
+      if (generation === this.#cacheGeneration && !this.#listPending) this.#bodyCache.set(page.id, text);
+      return text;
+    } catch (error) {
+      warn(`Could not load "${page.src}" for printing: ${error.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * One page of those printed together: where it is, then its body as the
+   * viewer shows it (callouts, colours, diagrams in light colours, every
+   * <details> open) and its last update. Its headings get ids of their own
+   * in the document, and links to them and to the other pages printed go there.
+   */
+  async #bookPage(page, markdown, places, options) {
+    const index = places.get(page.id);
+    const section = h('section', { class: 'mpv-book-page', id: `mpv-book-${index}` }, h('p', { class: 'mpv-book-path' }, this.#model.pathTo(page.id).map((id) => this.#model.get(id).title).join(' › ')));
+    const content = h('div', { class: 'mpv-content', part: 'content' });
+    section.append(content);
+    let fragment = null;
+    if (markdown !== null) {
+      try {
+        fragment = this.#renderPageMarkdown(page, markdown, options);
+      } catch (error) {
+        warn(`Could not render page "${page.id}" for printing: ${error.message}`);
+      }
+    }
+    if (!fragment) {
+      content.append(h('p', { class: 'mpv-book-failed' }, this.#text('failed')));
+      return section;
+    }
+    content.append(fragment);
+    for (const heading of assignHeadingIds(content, new Set())) heading.id = `mpv-book-${index}-${heading.id}`;
+    for (const details of content.querySelectorAll('details')) details.open = true;
+    for (const link of content.querySelectorAll('a[data-mpv-link]')) {
+      const hash = link.dataset.mpvHash || '';
+      if (link.dataset.mpvLink === 'hash') link.setAttribute('href', hash ? `#mpv-book-${index}-${hash}` : `#mpv-book-${index}`);
+      else if (link.dataset.mpvLink === 'page' && places.has(link.dataset.mpvId)) {
+        const at = places.get(link.dataset.mpvId);
+        link.setAttribute('href', hash ? `#mpv-book-${at}-${hash}` : `#mpv-book-${at}`);
+      }
+    }
+    await this.#bookDiagrams(content);
+    const updated = this.#updatedLine(page);
+    if (updated) content.append(updated);
+    return section;
+  }
+
+  /** The diagrams of a page printed with others, drawn in the light colours of paper (left as code if they cannot be). */
+  async #bookDiagrams(content) {
+    const src = this.#mermaidSrc();
+    const codes = src === null ? [] : [...content.querySelectorAll('pre > code.language-mermaid')];
+    if (codes.length === 0) return;
+    let mermaid;
+    try {
+      mermaid = await loadMermaid(src);
+    } catch {
+      return;
+    }
+    const settings = {
+      startOnLoad: false,
+      securityLevel: 'strict',
+      suppressErrorRendering: true,
+      theme: 'default',
+      fontFamily: getComputedStyle(this.#ui.frame).fontFamily,
+      secure: ['secure', 'securityLevel', 'startOnLoad', 'maxTextSize', 'maxEdges', 'suppressErrorRendering', 'themeCSS'],
+    };
+    for (const code of codes) {
+      try {
+        const { svg } = await drawWithMermaid(mermaid, settings, code.textContent.replace(/\n$/, ''));
+        code.parentElement.replaceWith(h('div', { class: 'mpv-diagram', part: 'diagram' }, diagramFragment(svg)));
+      } catch {
+        // left as its code
+      }
+    }
   }
 
   /**
@@ -2939,7 +3259,7 @@ export class MdPagesViewerElement extends HTMLElement {
       return;
     }
     if (target.closest('.mpv-print-button') === this.#ui.printButton) {
-      this.#printPage();
+      this.#onPrintButton();
       return;
     }
     if (target.closest('.mpv-markdown-button') === this.#ui.markdownButton) {
@@ -3574,6 +3894,7 @@ export class MdPagesViewerElement extends HTMLElement {
     this.#feedbackPage = null;
     this.#ui.feedback.hidden = true;
     this.#toolsShown = false;
+    this.#indexShown = false;
     this.#renderTools();
     this.#hideHitBar();
     this.#markChildIndex(false);

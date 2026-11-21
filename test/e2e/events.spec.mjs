@@ -31,6 +31,11 @@ const listen = (page) =>
 const details = (page, type) => page.evaluate((type) => window.__events.filter((e) => !type || e.type === type).map((e) => e.detail), type);
 const types = (page) => page.evaluate(() => window.__events.map((e) => e.type));
 const part = (viewer, name) => viewer.locator(`[part~="${name}"]`);
+/** PDF のボタンのメニューを開いて「このページ」を選ぶ。 */
+const printThisPage = async (viewer) => {
+  await part(viewer, 'print-button').click();
+  await part(viewer, 'print-menu-item').filter({ hasText: 'このページ' }).click();
+};
 
 test('[イベント/ページの切り替え] 出すページが変わるたびに mpv-pagechange（id・title・previousId・found）を1回送る。同じページの中の移動・同じページの新しい一覧では送らない。受け取った所でページを変えても、順に届く', async ({ page }) => {
   await page.goto(`${BLANK}?page=intro`);
@@ -213,7 +218,7 @@ test('[イベント/リンクのコピー] 見出しのリンクのボタンで 
   expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(second.url);
 });
 
-test('[イベント/PDF・Markdown] PDF のボタンで mpv-print（id）、Markdown のボタンで mpv-download（id・fileName・markdown）を送る。取り消すと新しいタブも印刷の画面もダウンロードもしない', async ({ page, context }) => {
+test('[イベント/PDF・Markdown] PDF のボタンの「このページ」で mpv-print（id・scope "page"・pageIds）、Markdown のボタンで mpv-download（id・fileName・markdown）を送る。取り消すと新しいタブも印刷の画面もダウンロードもしない', async ({ page, context }) => {
   await page.goto(BLANK);
   await listen(page);
   await page.evaluate(() => {
@@ -229,20 +234,20 @@ test('[イベント/PDF・Markdown] PDF のボタンで mpv-print（id）、Mark
 
   // 取り消す
   await cancelNext(viewer, 'mpv-print');
-  await part(viewer, 'print-button').click();
+  await printThisPage(viewer);
   await cancelNext(viewer, 'mpv-download');
   await part(viewer, 'markdown-button').click();
   await page.waitForTimeout(500);
   expect({ opened: opened.length, printed: await page.evaluate(() => window.__printed), downloads: downloads.length }).toEqual({ opened: 0, printed: 0, downloads: 0 });
   expect(await details(page)).toEqual([
     { id: 'a', title: 'A: 手順/説明', previousId: null, found: true },
-    { id: 'a' },
+    { id: 'a', scope: 'page', pageIds: ['a'] },
     { id: 'a', fileName: 'A_ 手順_説明.md', markdown: MD_A },
   ]);
   expect(await page.evaluate(() => window.__events.slice(1).map((e) => e.flags.cancelable))).toEqual([true, true]);
 
   // 取り消さなければ、今までどおり。src のページは読み込んだ Markdown を送る
-  const [tab] = await Promise.all([context.waitForEvent('page'), part(viewer, 'print-button').click()]);
+  const [tab] = await Promise.all([context.waitForEvent('page'), printThisPage(viewer)]);
   await tab.close();
   await viewer.evaluate((el) => (el.currentId = 'b'));
   await expect(content(viewer).locator('h1')).toBeVisible();

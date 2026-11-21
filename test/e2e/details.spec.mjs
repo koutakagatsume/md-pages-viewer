@@ -188,11 +188,12 @@ test('[表示/折りたたみ] 印刷では全部開いて出し、印刷が終�
   await page.evaluate(() => window.dispatchEvent(new Event('afterprint')));
   expect(await openStates(viewer)).toEqual([true, false, true, false]);
 
-  // PDF のボタンのタブ
+  // PDF のボタンのメニューの「このページ」のタブ
   await context.addInitScript(() => {
     window.print = () => {};
   });
-  const [tab] = await Promise.all([context.waitForEvent('page'), viewer.locator('[part~="print-button"]').click()]);
+  await viewer.locator('[part~="print-button"]').click();
+  const [tab] = await Promise.all([context.waitForEvent('page'), viewer.locator('[part~="print-menu-item"]', { hasText: 'このページ' }).click()]);
   await expect.poll(() => tab.evaluate(() => document.querySelectorAll('.mpv-content details').length)).toBe(4);
   expect(await tab.evaluate(() => [...document.querySelectorAll('.mpv-content details')].map((d) => d.open))).toEqual([true, true, true, true]);
   expect(await tab.evaluate(() => document.querySelectorAll('.mpv-details-buttons').length)).toBe(0);
